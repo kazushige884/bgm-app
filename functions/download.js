@@ -3,7 +3,6 @@ import { getStore } from '@netlify/blobs';
 import { preflight, cors, json } from './_lib.js';
 
 export default async (request) => {
-  // CORS / OPTIONS
   const pf = preflight(request);
   if (pf) return pf;
 
@@ -16,45 +15,57 @@ export default async (request) => {
 
     const store = getStore({ name: 'bgm-store' });
 
-    // ---- 1) まずは汎用 get(id) で取得（環境により戻り型が違う） ----
-    let got = await store.get(id); // 返り値の形は色々: null | {body, contentType, size} | Blob/Response | ArrayBuffer | Uint8Array
-    if (!got) return new Response('not found', { status: 404, headers: cors() });
+    // まず署名URL（あれば最強）
+    if (typeof store.getSignedUrl === 'function') {
+      try {
+        const signed = await store.getSignedUrl({ key: id, expires: 600 });
+        if (signed) {
+          return new Response(null, {
+            status: 302,
+            headers: { ...cors(), Location: signed, 'Cache-Control': 'no-cache' },
+          });
+        }
+      } catch (_) {}
+    }
 
-    // ---- 2) ArrayBuffer に正規化 ----
-    let contentType = 'audio/mpeg';
-    let total = undefined;
-    let buf;
-
-    const ensureArrayBuffer = async (x) => {
+    // 署名が使えない場合は本体を取得して配信
+    // 返り型の差異を全部吸収して ArrayBuffer に正規化
+    const normalizeToArrayBuffer = async (x) => {
       if (!x) return null;
       if (x instanceof ArrayBuffer) return x;
       if (x instanceof Uint8Array) return x.buffer;
-      if (typeof x.arrayBuffer === 'function') return await x.arrayBuffer(); // Blob/Response 互換
+      if (typeof x.arrayBuffer === 'function') return await x.arrayBuffer();
       if (x.body) {
         // { body, contentType?, size? }
-        contentType = x.contentType || contentType;
-        total = Number(x.size || 0) || undefined;
         const b = x.body;
         if (b instanceof ArrayBuffer) return b;
         if (b instanceof Uint8Array) return b.buffer;
         if (typeof b.arrayBuffer === 'function') return await b.arrayBuffer();
       }
-      // 最後の手段：文字列ならバイナリ化不可 → エラー
       return null;
     };
 
-    buf = await ensureArrayBuffer(got);
+    let ct = 'audio/mpeg';
+    let total = undefined;
+
+    let got = await store.get(id);
+    let buf = await normalizeToArrayBuffer(got);
+
+    // contentType / size 推定
+    if (got && typeof got === 'object') {
+      ct = got.contentType || ct;
+      total = Number(got.size || got?.metadata?.size || 0) || undefined;
+    }
+
     if (!buf) {
-      // 一部環境では get(id, { type:'stream' }) が取れることもある
+      // stream で再取得（一部環境）
       try {
         const streamed = await store.get(id, { type: 'stream' });
         if (streamed && streamed.body) {
-          contentType = streamed.contentType || contentType;
-          total = Number(streamed.size || 0) || undefined;
-          // stream → ArrayBuffer に吸収
+          ct = streamed.contentType || ct;
+          total = Number(streamed.size || 0) || total;
           const chunks = [];
           const reader = streamed.body.getReader();
-          // eslint-disable-next-line no-constant-condition
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -72,50 +83,40 @@ export default async (request) => {
       return new Response('not found', { status: 404, headers: cors() });
     }
 
-    // サイズ判定（上で total が未確定ならここで決定）
-    const fullLength = total ?? buf.byteLength;
-
-    // ---- 3) Range 対応 ----
-    const baseHeaders = {
+    const full = total ?? buf.byteLength;
+    const base = {
       ...cors(),
-      'Content-Type': contentType,
+      'Content-Type': ct || 'audio/mpeg',
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-cache',
     };
 
-    const range = request.headers.get('Range'); // 例: "bytes=0-"
+    const range = request.headers.get('Range'); // bytes=0-
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
       let start = Number(m?.[1] || 0);
-      let end = Number(m?.[2] || (fullLength - 1));
-      if (!Number.isFinite(start) || isNaN(start)) start = 0;
-      if (!Number.isFinite(end) || isNaN(end)) end = fullLength - 1;
-      start = Math.max(0, Math.min(start, fullLength - 1));
-      end = Math.max(start, Math.min(end, fullLength - 1));
+      let end = Number(m?.[2] || (full - 1));
+      if (!Number.isFinite(start)) start = 0;
+      if (!Number.isFinite(end)) end = full - 1;
+      start = Math.max(0, Math.min(start, full - 1));
+      end = Math.max(start, Math.min(end, full - 1));
 
       const chunk = buf.slice(start, end + 1);
       return new Response(chunk, {
         status: 206,
         headers: {
-          ...baseHeaders,
+          ...base,
           'Content-Length': String(chunk.byteLength),
-          'Content-Range': `bytes ${start}-${end}/${fullLength}`,
+          'Content-Range': `bytes ${start}-${end}/${full}`,
         },
       });
     }
 
-    // ---- 4) 全体返却 ----
     return new Response(buf, {
       status: 200,
-      headers: {
-        ...baseHeaders,
-        'Content-Length': String(fullLength),
-      },
+      headers: { ...base, 'Content-Length': String(full) },
     });
   } catch (err) {
-    return json(
-      { ok: false, error: 'download error', message: String(err?.message || err) },
-      500
-    );
+    return json({ ok:false, error:'download error', message:String(err?.message || err) }, 500);
   }
 };

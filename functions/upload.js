@@ -4,58 +4,47 @@ import { preflight, json } from './_lib.js';
 
 export default async (request) => {
   const pf = preflight(request); if (pf) return pf;
-  if (request.method !== 'POST') return json({ error: 'method' }, 405);
+  if (request.method !== 'POST') return json({ ok:false, error:'method' }, 405);
 
   try {
-    const form = await request.formData().catch(() => null);
-    if (!form) return json({ ok:false, error:'no-form' }, 400);
-
+    const form = await request.formData();
     const file = form.get('file');
-    if (!file) return json({ ok:false, error:'no-file' }, 400);
+    if (!file || typeof file.arrayBuffer !== 'function') {
+      return json({ ok:false, error:'no-file' }, 400);
+    }
 
-    const name = String(file.name || 'audio.mp3');
-    const ext  = (name.match(/\.[a-z0-9]+$/i)?.[0] || '.mp3').toLowerCase();
-    const typeFromPicker = String(file.type || '');
-
-    const guessByExt = (e) => {
-      if (e === '.mp3') return 'audio/mpeg';
-      if (e === '.m4a') return 'audio/mp4';
-      if (e === '.wav') return 'audio/wav';
-      if (e === '.ogg') return 'audio/ogg';
-      return 'application/octet-stream';
-    };
-    const contentType = typeFromPicker || guessByExt(ext);
-
-    const buf = new Uint8Array(await file.arrayBuffer());
-    if (buf.byteLength <= 0) return json({ ok:false, error:'empty-file' }, 400);
-    if (buf.byteLength > 50 * 1024 * 1024) return json({ ok:false, error:'too-large' }, 400);
-
-    // 例: audio/2025-08-24T081846564Z-xxxxx.mp3
-    const stamp = new Date().toISOString().replace(/[:.]/g, '');
-    const key = `audio/${stamp}-${Math.random().toString(36).slice(2)}${ext}`;
-
+    // ここを全関数で統一（list/download/geturl も 'bgm-store' を使います）
     const store = getStore({ name: 'bgm-store' });
-    await store.set(key, buf, {
+
+    // キーは audio/ に統一（download も同じ前提で探す）
+    const now = new Date();
+    const ts = now.toISOString().replace(/\.\d+Z$/, 'Z'); // 2025-08-24T11:48:54Z
+    const rand = Math.random().toString(36).slice(2, 12);
+    const safeName = (file.name || 'audio.mp3').replace(/[^\w.\-]+/g, '_');
+    const key = `audio/${ts}-${rand}.mp3`;
+
+    const contentType = file.type || 'audio/mpeg';
+    const ab = await file.arrayBuffer();
+
+    // Blobs に保存（メタデータも付けておく）
+    await store.set(key, ab, {
       contentType,
       metadata: {
-        title: name,
-        size: String(buf.byteLength),
-        uploadedAt: new Date().toISOString(),
+        title: safeName,
+        size: ab.byteLength,
+        uploadedAt: now.toISOString(),
       },
-      addRandomSuffix: false,
     });
 
-    const url = `/.netlify/functions/download?id=${encodeURIComponent(key)}`;
-
+    // クライアントは一覧で取り直すのでURLは空でOK（geturlが都度発行）
     return json({
       ok: true,
       id: key,
-      url,
-      title: name,
-      size: buf.byteLength,
-      date: new Date().toISOString(),
+      title: safeName,
+      size: ab.byteLength,
+      date: now.toISOString(),
     });
   } catch (err) {
-    return json({ ok:false, errorType: err?.name || 'Error', errorMessage: String(err?.message || err) }, 500);
+    return json({ ok:false, error: String(err?.message || err) }, 500);
   }
 };
