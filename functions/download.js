@@ -10,13 +10,13 @@ export default async (request) => {
     const u = new URL(request.url);
     const id = u.searchParams.get('id');
     if (!id || !id.startsWith('audio/')) {
-      return new Response('bad id', { status: 400, headers: cors() });
+      return json({ ok:false, error:'bad-id', siteId: process.env.NETLIFY_SITE_ID || null }, 400);
     }
 
     const store = getStore({ name: 'bgm-store' });
 
-    // --- list() で存在確認（診断用） ---
-    let listed = false; let sample = [];
+    // list で存在確認（診断）
+    let listed = false; let sample = []; let count = 0;
     try {
       const res = await store.list().catch(() => ({}));
       const blobs = Array.isArray(res?.blobs) ? res.blobs
@@ -25,10 +25,11 @@ export default async (request) => {
                   : [];
       const keys = blobs.map(b => b.key || b.name || b.id || '').filter(Boolean);
       listed = keys.includes(id);
-      sample = keys.slice(0, 10);
+      count = keys.length;
+      sample = keys.slice(0, 5);
     } catch {}
 
-    // 返り型を ArrayBuffer に正規化
+    // 取得（ArrayBufferに正規化）
     const toAB = async (x) => {
       if (!x) return null;
       if (x instanceof ArrayBuffer) return x;
@@ -43,11 +44,7 @@ export default async (request) => {
       return null;
     };
 
-    let ct = 'audio/mpeg';
-    let total;
-
-    // ① 通常 get()
-    let got = null;
+    let got = null, buf = null, ct = 'audio/mpeg', total;
     try {
       got = await store.get(id);
       if (got && typeof got === 'object') {
@@ -55,10 +52,8 @@ export default async (request) => {
         total = Number(got.size || got?.metadata?.size || 0) || undefined;
       }
     } catch {}
+    buf = await toAB(got);
 
-    let buf = await toAB(got);
-
-    // ② ダメなら stream
     if (!buf) {
       try {
         const streamed = await store.get(id, { type: 'stream' });
@@ -80,21 +75,21 @@ export default async (request) => {
     }
 
     if (!buf) {
-      // 404でも詳細JSONで返す（いまはこれを見たい）
       return json({
         ok: false,
         error: 'not-found-by-download',
         id,
-        listed,           // list() では見えているか
-        triedGet: !!got,  // get(id) が truthy だったか
+        listed,
+        count,
         sample,
+        siteId: process.env.NETLIFY_SITE_ID || null
       }, 404);
     }
 
     const full = total ?? buf.byteLength;
     const base = { ...cors(), 'Content-Type': ct, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' };
-
     const range = request.headers.get('Range');
+
     if (range) {
       const m = range.match(/bytes=(\d*)-(\d*)/);
       let start = Number(m?.[1] || 0);
@@ -116,6 +111,6 @@ export default async (request) => {
 
     return new Response(buf, { status: 200, headers: { ...base, 'Content-Length': String(full) } });
   } catch (err) {
-    return json({ ok:false, error:'download-error', message:String(err?.message || err) }, 500);
+    return json({ ok:false, error:'download-error', message:String(err?.message || err), siteId: process.env.NETLIFY_SITE_ID || null }, 500);
   }
 };
