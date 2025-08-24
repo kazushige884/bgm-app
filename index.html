@@ -15,11 +15,9 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
   h1{font-size:28px;margin:0 0 16px}
   h2{font-size:20px;margin:0 0 12px}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .btn{border-radius:10px;border:1px solid var(--line);padding:10px 16px;font-weight:700;cursor:pointer;background:#f7f7f7}
   .btn.primary{background:#eef2ff;border-color:#c7d2fe;color:#111}
   .btn.danger{background:#fee2e2;border-color:#fecaca;color:#7f1d1d}
-  .btn.ghost{background:#fff}
   .right{margin-left:auto}
   .table{width:100%;border-collapse:collapse}
   .table th,.table td{border-bottom:1px solid var(--line);padding:12px 8px;text-align:left;vertical-align:middle}
@@ -37,14 +35,19 @@
 <div class="container">
   <h1>BGM 管理</h1>
 
-  <!-- メインカード -->
   <div class="card">
     <div class="topbar">
       <div class="badge">左上</div>
       <h2 style="margin:0">BGMリスト</h2>
       <div class="right">
-        <button id="btnBack" class="btn">戻る</button>
+        <button id="btnBack" class="btn" type="button">戻る</button>
       </div>
+    </div>
+
+    <!-- iOSのサウンドポリシー解放用：最初に一度だけ押すと確実 -->
+    <div class="row" style="margin-bottom:8px;gap:8px;align-items:center">
+      <button id="btnEnableAudio" class="btn" type="button">サウンドを有効化</button>
+      <span class="muted">（iPadで無音になる時は最初に押してください）</span>
     </div>
 
     <table class="table" aria-label="BGM一覧">
@@ -65,199 +68,149 @@
 
     <div class="toolbar">
       <input id="filePicker" type="file" accept="audio/*" class="hidden" />
-      <button id="btnAdd" class="btn primary">追加</button>
-      <button id="btnDel" class="btn danger">削除</button>
+      <button id="btnAdd" class="btn primary" type="button">追加</button>
+      <button id="btnDel" class="btn danger" type="button">削除</button>
     </div>
 
     <div id="errBox" class="err"></div>
   </div>
 </div>
 
-<!-- 共有の隠しプレイヤー（メタデータ取得用） -->
-<audio id="preview" preload="metadata" class="hidden"></audio>
+<!-- 共有の隠しプレイヤー -->
+<audio id="preview" preload="metadata" class="hidden" crossorigin="anonymous"></audio>
 
 <script>
-/* ========= ヘルパー ========= */
+/* ===== ヘルパー ===== */
 const $ = (id)=>document.getElementById(id);
-const fmtBytes = (n)=>{
-  if(!Number.isFinite(n) || n<=0) return '–';
-  const u=['B','KB','MB','GB']; let i=0;
-  while(n>=1024 && i<u.length-1){ n/=1024; i++; }
-  return `${n.toFixed(n<10&&i>0?1:0)} ${u[i]}`;
-};
-const fmtDateISO = (s)=>{
-  if(!s) return '–';
-  const d = new Date(s);
-  if(isNaN(d)) return '–';
-  const z=n=>String(n).padStart(2,'0');
-  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}\n${z(d.getHours())}:${z(d.getMinutes())}`;
-};
-const parseDateFromKey = (key)=>{
-  const m = String(key).match(/^audio\/([^/-]+)/);
-  if(!m) return null;
-  const raw = m[1];
-  const m2 = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})/);
-  return m2 ? `${m2[1]}T${m2[2]}:${m2[3]}:${m2[4]}Z` : null;
-};
+const fmtBytes = (n)=>{ if(!Number.isFinite(n)||n<=0) return '–';
+  const u=['B','KB','MB','GB']; let i=0; while(n>=1024 && i<u.length-1){n/=1024;i++;} return `${n.toFixed(n<10&&i>0?1:0)} ${u[i]}`; };
+const fmtDateISO = (s)=>{ if(!s) return '–'; const d=new Date(s); if(isNaN(d)) return '–';
+  const z=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}\n${z(d.getHours())}:${z(d.getMinutes())}`; };
+const parseDateFromKey=(key)=>{ const m=String(key).match(/^audio\/([^/-]+)/); if(!m) return null; const raw=m[1];
+  const m2=raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})/); return m2?`${m2[1]}T${m2[2]}:${m2[3]}:${m2[4]}Z`:null; };
+const setError = (msg)=> $('errBox').textContent = msg || '';
 
-/* ========= API ========= */
-async function apiList(){
-  const r = await fetch('/.netlify/functions/list', { method:'GET' });
-  if(!r.ok) throw new Error(`一覧の取得に失敗しました（HTTP ${r.status}）\n${await r.text()}`);
-  return r.json();
-}
-async function apiUpload(file){
-  const fd = new FormData();
-  fd.append('file', file);
-  const r = await fetch('/.netlify/functions/upload', { method:'POST', body: fd });
-  if(!r.ok) throw new Error(`アップロード失敗（HTTP ${r.status}）\n${await r.text()}`);
-  return r.json();
-}
-async function apiRemove(ids){
-  const r = await fetch('/.netlify/functions/remove', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ ids })
-  });
-  if(!r.ok) throw new Error(`削除失敗（HTTP ${r.status}）\n${await r.text()}`);
-  return r.json();
-}
+/* ===== API ===== */
+async function apiList(){ const r=await fetch('/.netlify/functions/list'); if(!r.ok) throw new Error(`一覧NG ${r.status}`); return r.json(); }
+async function apiUpload(file){ const fd=new FormData(); fd.append('file',file);
+  const r=await fetch('/.netlify/functions/upload',{method:'POST',body:fd}); if(!r.ok) throw new Error(`アップロードNG ${r.status}`); return r.json(); }
+async function apiRemove(ids){ const r=await fetch('/.netlify/functions/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  if(!r.ok) throw new Error(`削除NG ${r.status}`); return r.json(); }
 
-/* ========= UI：描画 ========= */
-let items = []; // {id,title,url,size?,date?}
-
-function setError(msg){ $('errBox').textContent = msg || ''; }
+/* ===== データ＆描画 ===== */
+let items=[];
 function setCount(){ $('countText').textContent = `${items.length} 件`; }
 
 function makeRow(it){
-  const tr = document.createElement('tr');
+  const tr=document.createElement('tr');
 
-  const tdChk = document.createElement('td');
-  const cb = document.createElement('input');
-  cb.type = 'checkbox'; cb.dataset.id = it.id;
-  tdChk.appendChild(cb);
+  const tdChk=document.createElement('td');
+  const cb=document.createElement('input'); cb.type='checkbox'; cb.dataset.id=it.id; tdChk.appendChild(cb);
 
-  const tdTitle = document.createElement('td');
-  tdTitle.textContent = it.title || it.id.split('/').pop();
+  const tdTitle=document.createElement('td'); tdTitle.textContent=it.title||it.id.split('/').pop();
 
-  const tdDate = document.createElement('td');
-  tdDate.style.whiteSpace='pre';
-  const d = it.date || parseDateFromKey(it.id);
-  tdDate.textContent = fmtDateISO(d);
+  const tdDate=document.createElement('td'); tdDate.style.whiteSpace='pre'; tdDate.textContent=fmtDateISO(it.date||parseDateFromKey(it.id));
+  const tdSize=document.createElement('td'); tdSize.textContent=fmtBytes(it.size);
 
-  const tdSize = document.createElement('td');
-  tdSize.textContent = fmtBytes(it.size);
+  const tdDur=document.createElement('td'); tdDur.textContent='–:–';
 
-  const tdDur = document.createElement('td');
-  tdDur.textContent = '–:–';
-
-  const tdPlay = document.createElement('td');
-  const btn = document.createElement('button');
-  btn.className = 'pill'; btn.title='1.5秒だけ試聴';
-  btn.textContent = '▶';
-  btn.addEventListener('click', ()=>{
-    const a = $('preview');
-    // キャッシュバスターをつけて毎回 loadedmetadata を発火させる
-    const url = it.url + (it.url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-    a.preload = 'metadata';
-    a.src = url;
-
-    const onMeta = ()=>{
-      if(Number.isFinite(a.duration)){
-        const m = Math.floor(a.duration/60), s = Math.round(a.duration%60);
-        tdDur.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-      }
-      a.removeEventListener('loadedmetadata', onMeta);
-    };
-    a.addEventListener('loadedmetadata', onMeta);
-
-    a.play().catch(()=>{});                 // ユーザー操作起点なのでOK
-    setTimeout(()=>{ try{ a.pause(); }catch{} }, 1500);
-  });
+  const tdPlay=document.createElement('td');
+  const btn=document.createElement('button'); btn.type='button'; btn.className='pill'; btn.textContent='▶'; btn.title='1.5秒試聴';
   tdPlay.appendChild(btn);
 
-  tr.append(tdChk, tdTitle, tdDate, tdSize, tdDur, tdPlay);
+  // ▼ ここで直接イベントを付与（イベント委任ではなく確実に発火させる）
+  btn.addEventListener('click', ()=>{
+    try{
+      const a=$('preview');
+      const playUrl = it.url + (it.url.includes('?')?'&':'?') + 'v=' + Date.now(); // キャッシュ無効化
+      a.pause(); a.currentTime=0; a.preload='metadata'; a.src=playUrl;
+
+      tdDur.textContent='…'; // 読み込み中表示
+
+      const onMeta=()=>{
+        if(Number.isFinite(a.duration)){
+          const m=Math.floor(a.duration/60), s=Math.round(a.duration%60);
+          tdDur.textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        }else{
+          tdDur.textContent='–:–';
+        }
+        a.removeEventListener('loadedmetadata', onMeta);
+      };
+      const onErr= (e)=>{
+        tdDur.textContent='–:–';
+        setError('試聴に失敗しました（ネットワーク/形式）');
+        a.removeEventListener('error', onErr);
+      };
+      a.addEventListener('loadedmetadata', onMeta);
+      a.addEventListener('error', onErr);
+
+      a.play().then(()=>{
+        setTimeout(()=>{ try{ a.pause(); }catch{} }, 1500);
+      }).catch(err=>{
+        // iOSでミュートスイッチや最初の再生許可が無い場合
+        setError('再生できませんでした: ' + (err?.name||'Error') + '（「サウンドを有効化」を押してから再試行）');
+        tdDur.textContent='–:–';
+      });
+    }catch(err){
+      setError('クリック処理で例外: ' + String(err));
+      tdDur.textContent='–:–';
+    }
+  });
+
+  tr.append(tdChk,tdTitle,tdDate,tdSize,tdDur,tdPlay);
   return tr;
 }
 
 function render(){
-  const tbody = $('tbody');
-  tbody.innerHTML = '';
+  const tbody=$('tbody'); tbody.innerHTML='';
   for(const it of items){ tbody.appendChild(makeRow(it)); }
   setCount();
 }
 
-/* ========= イベント ========= */
-$('btnBack').addEventListener('click', ()=> history.back());
-$('chkAll').addEventListener('change', (e)=>{
-  const on = e.target.checked;
-  document.querySelectorAll('#tbody input[type="checkbox"]').forEach(c=> c.checked = on);
+/* ===== イベント ===== */
+$('btnBack').addEventListener('click', ()=>history.back());
+$('chkAll').addEventListener('change', e=>{
+  const on=e.target.checked; document.querySelectorAll('#tbody input[type="checkbox"]').forEach(c=> c.checked=on);
 });
-
 $('btnAdd').addEventListener('click', ()=> $('filePicker').click());
 $('filePicker').addEventListener('change', async (e)=>{
-  setError('');
-  const f = e.target.files && e.target.files[0];
-  e.target.value = '';
-  if(!f) return;
+  setError(''); const f=e.target.files && e.target.files[0]; e.target.value=''; if(!f) return;
   try{
-    const res = await apiUpload(f);
-    if(res?.ok){
-      items.unshift({
-        id: res.id, title: res.title, url: res.url, size: res.size, date: res.date
-      });
-      render();
-    }else{
-      throw new Error(res?.errorMessage || 'アップロードに失敗しました');
-    }
-  }catch(err){
-    setError(String(err));
-  }
+    const res=await apiUpload(f);
+    if(res?.ok){ items.unshift({id:res.id,title:res.title,url:res.url,size:res.size,date:res.date}); render(); }
+    else{ throw new Error(res?.errorMessage||'アップロード失敗'); }
+  }catch(err){ setError(String(err)); }
 });
-
 $('btnDel').addEventListener('click', async ()=>{
-  setError('');
-  const ids = Array.from(document.querySelectorAll('#tbody input[type="checkbox"]:checked'))
-              .map(c=>c.dataset.id);
-  if(ids.length===0){ setError('削除するファイルをチェックしてください'); return; }
+  setError(''); const ids=Array.from(document.querySelectorAll('#tbody input[type="checkbox"]:checked')).map(c=>c.dataset.id);
+  if(!ids.length){ setError('削除するファイルをチェックしてください'); return; }
   if(!confirm(`${ids.length} 件を削除します。よろしいですか？`)) return;
-  try{
-    const res = await apiRemove(ids);
-    if(res?.ok){
-      const set = new Set(ids);
-      items = items.filter(it=> !set.has(it.id));
-      render();
-    }else{
-      throw new Error(res?.errorMessage || '削除に失敗しました');
-    }
-  }catch(err){
-    setError(String(err));
-  }
+  try{ const res=await apiRemove(ids); if(res?.ok){ const set=new Set(ids); items=items.filter(it=>!set.has(it.id)); render(); } else{ throw new Error('削除失敗'); } }
+  catch(err){ setError(String(err)); }
 });
 
-/* ========= 初回ロード ========= */
+/* iOS向け：最初に押してオーディオを“解錠” */
+$('btnEnableAudio').addEventListener('click', ()=>{
+  setError('');
+  const a=$('preview');
+  a.src='data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA'; // 無音データ
+  a.play().then(()=>{ a.pause(); setError('サウンド準備OK'); }).catch(()=>{ setError('サウンド許可が必要です（端末の音量/消音を確認）'); });
+});
+
+/* ===== 初回ロード ===== */
 (async function init(){
   setError('読み込み中…');
   try{
-    const res = await apiList();
+    const res=await apiList();
     if(res?.ok){
       items = Array.isArray(res.items) ? res.items : [];
       items.sort((a,b)=>{
-        const ad = a.date || parseDateFromKey(a.id);
-        const bd = b.date || parseDateFromKey(b.id);
-        if(!ad && !bd) return 0;
-        if(!ad) return 1;
-        if(!bd) return -1;
-        return ad < bd ? 1 : -1;
+        const ad=a.date||parseDateFromKey(a.id); const bd=b.date||parseDateFromKey(b.id);
+        if(!ad&&!bd) return 0; if(!ad) return 1; if(!bd) return -1; return ad<bd?1:-1;
       });
-      setError('');
-      render();
-    }else{
-      throw new Error(res?.errorMessage || '一覧の取得に失敗しました');
-    }
-  }catch(err){
-    setError(String(err));
-  }
+      setError(''); render();
+    }else{ throw new Error(res?.errorMessage||'一覧取得失敗'); }
+  }catch(err){ setError(String(err)); }
 })();
 </script>
 </body>
