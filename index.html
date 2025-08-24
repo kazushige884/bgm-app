@@ -65,7 +65,7 @@
   </div>
 
   <!-- 再生用プレーヤ（画面外） -->
-  <audio id="player" preload="metadata" playsinline></audio>
+  <audio id="player" preload="metadata" playsinline webkit-playsinline></audio>
 
   <div id="toast"></div>
 
@@ -91,18 +91,70 @@ let audioUnlocked = false;
 const player = document.getElementById('player');
 
 // iPad/ブラウザの自動再生対策：最初に一度だけ play() を成功させる
+async function unlockAudio(){
+  // 1) WebAudio でアンロック
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC){
+      const ac = new AC();
+      await ac.resume();
+      const gain = ac.createGain();
+      gain.gain.value = 0.0001; // ほぼ無音
+      gain.connect(ac.destination);
+      const osc = ac.createOscillator();
+      osc.frequency.value = 440;
+      osc.connect(gain);
+      osc.start();
+      osc.stop(ac.currentTime + 0.01);
+    }
+  }catch(_){}
+
+  // 2) HTMLAudio をミュートで瞬間再生→停止
+  try{
+    player.muted = true;
+    player.src = 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA'; // ごく短い無音
+    await player.play();
+    await new Promise(r=>setTimeout(r, 30));
+    player.pause();
+    player.currentTime = 0;
+    player.muted = false;
+  }catch(_){}
+
+  // 3) 最終手段：ダミー Blob を一瞬再生
+  try{
+    const blob = new Blob([new Uint8Array([0])], { type:'audio/mp3' });
+    const url = URL.createObjectURL(blob);
+    player.muted = true;
+    player.src = url;
+    await player.play();
+    player.pause();
+    player.currentTime = 0;
+    player.muted = false;
+    URL.revokeObjectURL(url);
+  }catch(_){}
+}
+
 document.getElementById('btnEnableSound').addEventListener('click', async ()=>{
   try{
-    // 無音データを鳴らしてアンロック
-    player.src = 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA'; // 数ミリ秒の無音
-    await player.play();
+    await unlockAudio();
     audioUnlocked = true;
     document.getElementById('soundGate').style.display = 'none';
     toast('サウンドを有効化しました');
   }catch(err){
-    alert('有効化に失敗しました。画面をタップしてもう一度お試しください。');
+    alert('有効化に失敗しました。もう一度ボタンを押すか、画面をタップしてからお試しください。');
   }
 });
+
+// 画面タップでのフォールバック（iOSでまれに必要）
+document.addEventListener('touchstart', async function onFirstTouch(){
+  if (audioUnlocked) return;
+  try{
+    await unlockAudio();
+    audioUnlocked = true;
+    document.getElementById('soundGate').style.display = 'none';
+  }catch(_){}
+  document.removeEventListener('touchstart', onFirstTouch);
+}, { once:true });
 
 // ---- リスト取得と描画
 async function fetchList(){
