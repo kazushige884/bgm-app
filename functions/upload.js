@@ -18,7 +18,7 @@ export default async (request) => {
 
     // キーは audio/ 固定（download/list/debug もこの前提）
     const now = new Date();
-    const ts = now.toISOString().replace(/\.\d+Z$/, 'Z');
+    const ts = now.toISOString().replace(/\.\d+Z$/, 'Z').replace(/[:]/g, '');
     const rand = Math.random().toString(36).slice(2, 12);
     const safeName = (file.name || 'audio.mp3').replace(/[^\w.\-]+/g, '_');
     const key = `audio/${ts}-${rand}.mp3`;
