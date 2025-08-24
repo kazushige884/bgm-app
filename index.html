@@ -44,10 +44,9 @@
       </div>
     </div>
 
-    <!-- iOSのサウンドポリシー解放用：最初に一度だけ押すと確実 -->
     <div class="row" style="margin-bottom:8px;gap:8px;align-items:center">
       <button id="btnEnableAudio" class="btn" type="button">サウンドを有効化</button>
-      <span class="muted">（iPadで無音になる時は最初に押してください）</span>
+      <span class="muted">（Mac/iPadで無音の時は最初に押してください）</span>
     </div>
 
     <table class="table" aria-label="BGM一覧">
@@ -76,7 +75,6 @@
   </div>
 </div>
 
-<!-- 共有の隠しプレイヤー -->
 <audio id="preview" preload="metadata" class="hidden" crossorigin="anonymous"></audio>
 
 <script>
@@ -96,6 +94,7 @@ async function apiUpload(file){ const fd=new FormData(); fd.append('file',file);
   const r=await fetch('/.netlify/functions/upload',{method:'POST',body:fd}); if(!r.ok) throw new Error(`アップロードNG ${r.status}`); return r.json(); }
 async function apiRemove(ids){ const r=await fetch('/.netlify/functions/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
   if(!r.ok) throw new Error(`削除NG ${r.status}`); return r.json(); }
+async function apiGetUrl(id){ const r=await fetch('/.netlify/functions/geturl?id='+encodeURIComponent(id)); if(!r.ok) throw new Error(`URL取得NG ${r.status}`); return r.json(); }
 
 /* ===== データ＆描画 ===== */
 let items=[];
@@ -118,14 +117,18 @@ function makeRow(it){
   const btn=document.createElement('button'); btn.type='button'; btn.className='pill'; btn.textContent='▶'; btn.title='1.5秒試聴';
   tdPlay.appendChild(btn);
 
-  // ▼ ここで直接イベントを付与（イベント委任ではなく確実に発火させる）
-  btn.addEventListener('click', ()=>{
+  btn.addEventListener('click', async ()=>{
     try{
-      const a=$('preview');
-      const playUrl = it.url + (it.url.includes('?')?'&':'?') + 'v=' + Date.now(); // キャッシュ無効化
-      a.pause(); a.currentTime=0; a.preload='metadata'; a.src=playUrl;
+      setError('');
+      tdDur.textContent='…';
 
-      tdDur.textContent='…'; // 読み込み中表示
+      // クリック直前に新しい署名付きURLを取得
+      const r = await apiGetUrl(it.id);
+      if(!r?.ok || !r.url){ tdDur.textContent='–:–'; setError('再生URLの取得に失敗しました'); return; }
+
+      const a=$('preview');
+      const playUrl = r.url + (r.url.includes('?')?'&':'?') + 'v=' + Date.now(); // キャッシュ無効化
+      a.pause(); a.currentTime=0; a.preload='metadata'; a.src=playUrl;
 
       const onMeta=()=>{
         if(Number.isFinite(a.duration)){
@@ -136,7 +139,7 @@ function makeRow(it){
         }
         a.removeEventListener('loadedmetadata', onMeta);
       };
-      const onErr= (e)=>{
+      const onErr=()=>{
         tdDur.textContent='–:–';
         setError('試聴に失敗しました（ネットワーク/形式）');
         a.removeEventListener('error', onErr);
@@ -144,16 +147,15 @@ function makeRow(it){
       a.addEventListener('loadedmetadata', onMeta);
       a.addEventListener('error', onErr);
 
-      a.play().then(()=>{
-        setTimeout(()=>{ try{ a.pause(); }catch{} }, 1500);
-      }).catch(err=>{
-        // iOSでミュートスイッチや最初の再生許可が無い場合
-        setError('再生できませんでした: ' + (err?.name||'Error') + '（「サウンドを有効化」を押してから再試行）');
-        tdDur.textContent='–:–';
+      await a.play().catch(async ()=>{
+        // 自動解錠して再試行
+        await unlockAudio();
+        await a.play();
       });
+      setTimeout(()=>{ try{ a.pause(); }catch{} }, 1500);
     }catch(err){
-      setError('クリック処理で例外: ' + String(err));
       tdDur.textContent='–:–';
+      setError('クリック処理で例外: ' + String(err));
     }
   });
 
@@ -189,12 +191,16 @@ $('btnDel').addEventListener('click', async ()=>{
   catch(err){ setError(String(err)); }
 });
 
-/* iOS向け：最初に押してオーディオを“解錠” */
-$('btnEnableAudio').addEventListener('click', ()=>{
+/* iOS/Mac向け：無音で“解錠”する関数 + ボタン */
+async function unlockAudio(){
+  const a = $('preview');
+  a.src = 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA';
+  try{ await a.play(); }catch{} finally{ try{ a.pause(); }catch{} }
+}
+$('btnEnableAudio').addEventListener('click', async ()=>{
   setError('');
-  const a=$('preview');
-  a.src='data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA'; // 無音データ
-  a.play().then(()=>{ a.pause(); setError('サウンド準備OK'); }).catch(()=>{ setError('サウンド許可が必要です（端末の音量/消音を確認）'); });
+  try{ await unlockAudio(); setError('サウンド準備OK'); }
+  catch{ setError('サウンド許可が必要です（音量/消音を確認）'); }
 });
 
 /* ===== 初回ロード ===== */
