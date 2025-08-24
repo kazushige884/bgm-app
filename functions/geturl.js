@@ -3,8 +3,12 @@ import { getStore } from '@netlify/blobs';
 import { preflight, json } from './_lib.js';
 
 export default async (request) => {
-  const pf = preflight(request); if (pf) return pf;
-  if (request.method !== 'GET') return json({ ok:false, error:'method' }, 405);
+  const pf = preflight(request); 
+  if (pf) return pf;
+
+  if (request.method !== 'GET') {
+    return json({ ok:false, error:'method' }, 405);
+  }
 
   try {
     const u = new URL(request.url);
@@ -14,16 +18,15 @@ export default async (request) => {
     }
 
     const store = getStore({ name: 'bgm-store' });
-    let url = '';
 
-    // 署名付きURL（10分有効）
-    if (typeof store.getSignedUrl === 'function') {
-      url = await store.getSignedUrl({ key: id, expires: 600 });
+    if (typeof store.getSignedUrl !== 'function') {
+      return json({ ok:false, error:'signed-url-not-supported' }, 500);
     }
 
-    // フォールバック（未対応環境）
+    // 署名付きURL（10分有効）
+    const url = await store.getSignedUrl({ key: id, expires: 600 });
     if (!url) {
-      url = `/.netlify/functions/download?id=${encodeURIComponent(id)}`;
+      return json({ ok:false, error:'no-url' }, 404);
     }
 
     return json({ ok:true, url });
