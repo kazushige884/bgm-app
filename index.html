@@ -81,10 +81,25 @@
     const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
     const toastEl = $('#toast');
     const toast = (msg) => { toastEl.textContent = msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'), 1800); };
-    const fmtSize = (n) => (typeof n==='number' && isFinite(n))
-        ? (n >= 1024*1024 ? (n/1024/1024).toFixed(1)+' MB' : (n/1024).toFixed(0)+' KB') : '—';
-    const fmtDate = (iso) => { try{ if(!iso) return '—'; const d=new Date(iso); if(isNaN(d)) return '—';
-      const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }catch{return '—'} };
+    const fmtSize = (n) => {
+  const v = Number(n);
+  if (!isFinite(v) || v <= 0) return '—';
+  if (v >= 1024*1024*1024) return (v/1024/1024/1024).toFixed(2) + ' GB';
+  if (v >= 1024*1024)      return (v/1024/1024).toFixed(1) + ' MB';
+  if (v >= 1024)           return Math.round(v/1024) + ' KB';
+  return v + ' B';
+};
+    const fmtDate = (iso) => {
+  try {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d)) return '—';
+    const p = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch {
+    return '—';
+  }
+};
   </script>
 
   <script>
