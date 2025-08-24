@@ -1,122 +1,35 @@
 // functions/download.js
 import { getStore } from '@netlify/blobs';
-import { preflight, cors, json } from './_lib.js';
+import { preflight } from './_lib.js';
 
 export default async (request) => {
   const pf = preflight(request);
   if (pf) return pf;
 
+  const url = new URL(request.url);
+  const id = url.searchParams.get('id');
+
+  if (!id || !id.startsWith('audio/')) {
+    return new Response('bad id', { status: 400 });
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    if (!id || !id.startsWith('audio/')) {
-      return new Response('bad id', { status: 400, headers: cors() });
-    }
-
     const store = getStore({ name: 'bgm-store' });
+    const blob = await store.get(id);
 
-    // まず署名URL（あれば最強）
-    if (typeof store.getSignedUrl === 'function') {
-      try {
-        const signed = await store.getSignedUrl({ key: id, expires: 600 });
-        if (signed) {
-          return new Response(null, {
-            status: 302,
-            headers: { ...cors(), Location: signed, 'Cache-Control': 'no-cache' },
-          });
-        }
-      } catch (_) {}
+    if (!blob) {
+      return new Response('not found', { status: 404 });
     }
 
-    // 署名が使えない場合は本体を取得して配信
-    // 返り型の差異を全部吸収して ArrayBuffer に正規化
-    const normalizeToArrayBuffer = async (x) => {
-      if (!x) return null;
-      if (x instanceof ArrayBuffer) return x;
-      if (x instanceof Uint8Array) return x.buffer;
-      if (typeof x.arrayBuffer === 'function') return await x.arrayBuffer();
-      if (x.body) {
-        // { body, contentType?, size? }
-        const b = x.body;
-        if (b instanceof ArrayBuffer) return b;
-        if (b instanceof Uint8Array) return b.buffer;
-        if (typeof b.arrayBuffer === 'function') return await b.arrayBuffer();
-      }
-      return null;
-    };
-
-    let ct = 'audio/mpeg';
-    let total = undefined;
-
-    let got = await store.get(id);
-    let buf = await normalizeToArrayBuffer(got);
-
-    // contentType / size 推定
-    if (got && typeof got === 'object') {
-      ct = got.contentType || ct;
-      total = Number(got.size || got?.metadata?.size || 0) || undefined;
-    }
-
-    if (!buf) {
-      // stream で再取得（一部環境）
-      try {
-        const streamed = await store.get(id, { type: 'stream' });
-        if (streamed && streamed.body) {
-          ct = streamed.contentType || ct;
-          total = Number(streamed.size || 0) || total;
-          const chunks = [];
-          const reader = streamed.body.getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) chunks.push(value);
-          }
-          const merged = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
-          let off = 0;
-          for (const c of chunks) { merged.set(c, off); off += c.length; }
-          buf = merged.buffer;
-        }
-      } catch (_) {}
-    }
-
-    if (!buf) {
-      return new Response('not found', { status: 404, headers: cors() });
-    }
-
-    const full = total ?? buf.byteLength;
-    const base = {
-      ...cors(),
-      'Content-Type': ct || 'audio/mpeg',
-      'Accept-Ranges': 'bytes',
-      'Cache-Control': 'no-cache',
-    };
-
-    const range = request.headers.get('Range'); // bytes=0-
-    if (range) {
-      const m = range.match(/bytes=(\d*)-(\d*)/);
-      let start = Number(m?.[1] || 0);
-      let end = Number(m?.[2] || (full - 1));
-      if (!Number.isFinite(start)) start = 0;
-      if (!Number.isFinite(end)) end = full - 1;
-      start = Math.max(0, Math.min(start, full - 1));
-      end = Math.max(start, Math.min(end, full - 1));
-
-      const chunk = buf.slice(start, end + 1);
-      return new Response(chunk, {
-        status: 206,
-        headers: {
-          ...base,
-          'Content-Length': String(chunk.byteLength),
-          'Content-Range': `bytes ${start}-${end}/${full}`,
-        },
-      });
-    }
-
-    return new Response(buf, {
+    return new Response(blob, {
       status: 200,
-      headers: { ...base, 'Content-Length': String(full) },
+      headers: {
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+      },
     });
   } catch (err) {
-    return json({ ok:false, error:'download error', message:String(err?.message || err) }, 500);
+    return new Response('error: ' + err.message, { status: 500 });
   }
 };
