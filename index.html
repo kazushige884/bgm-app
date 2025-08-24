@@ -1,87 +1,95 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BGM 管理</title>
-  <style>
-    :root{
-      --bg:#ffffff; --text:#222; --accent:#0b5fff; --muted:#666; --line:#e5e7eb;
-    }
-    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
-      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;}
-    .wrap{max-width:960px;margin:0 auto;padding:20px}
-    h1{margin:0 0 12px}
-    .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
-    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 12px}
-    button.primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}
-    button.ghost{background:#fafafa}
-    input[type="file"]{display:none}
-    table{width:100%;border-collapse:collapse;margin-top:8px}
-    th,td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:left}
-    th{font-size:.95rem;color:#444;background:#f8fafc}
-    td.size, td.date, td.dur {white-space:nowrap;color:#333}
-    td.title{word-break:break-all}
-    .right{display:flex;gap:8px;justify-content:flex-end}
-    .muted{color:var(--muted);font-size:.9rem}
-    .note{color:#444;font-size:.92rem}
-    .danger{color:#c62828}
-    .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
-      background:#111;color:#fff;padding:10px 14px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none}
-    .toast.show{opacity:1}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>BGM 管理</title>
+<style>
+  :root{
+    --bg:#ffffff; --text:#111; --panel:#f5f7fa; --line:#e3e6ea; --blue:#2563eb; --red:#e11d48;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif}
+  .wrap{max-width:min(1000px,92vw);margin:24px auto;padding:16px}
+  h1{margin:0 0 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .btn{border:none;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer}
+  .btn.primary{background:var(--blue);color:#fff}
+  .btn.danger{background:var(--red);color:#fff}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:#111}
+  input[type="file"]{padding:8px;background:#fff;border:1px solid var(--line);border-radius:10px}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{background:#fafbfc;font-weight:700}
+  tbody tr:hover{background:#f9fbff}
+  .num{font-variant-numeric:tabular-nums}
+  .right{text-align:right}
+  .center{text-align:center}
+  .muted{color:#6b7280}
+  .note{font-size:12px;color:#6b7280;margin-top:8px}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .hidden{display:none !important}
+  .player-wrap{margin:16px 0}
+  .status{margin-top:10px;font-size:14px;color:#374151}
+  .error{color:#b91c1c}
+</style>
 </head>
 <body>
   <div class="wrap">
     <h1>BGMリスト</h1>
 
     <div class="card">
-      <div class="row">
-        <label class="note">MP3 を追加：</label>
+      <div class="toolbar">
         <input id="fileInput" type="file" accept="audio/*" />
-        <button id="btnPick" class="ghost">ファイルを選択</button>
-        <button id="btnUpload" class="primary">追加（アップロード）</button>
-        <span id="pickName" class="muted"></span>
+        <button id="btnAdd" class="btn primary">追加</button>
+        <button id="btnDelete" class="btn danger">削除</button>
+        <span id="msg" class="status"></span>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="right">
-        <button id="btnRefresh" class="ghost">再読込</button>
-        <button id="btnRemove" class="danger">削除（チェック選択）</button>
-      </div>
       <table id="tbl">
         <thead>
           <tr>
-            <th style="width:48px"><input id="chkAll" type="checkbox" /></th>
+            <th class="center" style="width:48px"><input id="chkAll" type="checkbox" /></th>
             <th>Title</th>
-            <th style="width:120px">DATE</th>
-            <th style="width:110px">FILESIZE</th>
-            <th style="width:100px">DURATION</th>
-            <th style="width:120px">操作</th>
+            <th style="width:200px">DATE</th>
+            <th style="width:140px" class="right">FILESIZE</th>
+            <th style="width:120px" class="center">DURATION</th>
+            <th style="width:120px" class="center">操作</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="6" class="muted">読み込み中…</td></tr>
+          <tr><td colspan="6" class="center muted">読み込み中…</td></tr>
         </tbody>
       </table>
-    </div>
 
-    <!-- 共有オーディオ（確実に鳴らすため一旦コントロール表示） -->
-    <audio id="bgmPlayer" controls preload="none" playsinline style="display:block;width:100%;max-width:600px;margin:12px auto 0;"></audio>
-    <div class="muted" style="text-align:center">※「試聴」を押すとここで再生されます</div>
+      <div class="note">
+        ・「追加」で音声（MP3 等）をアップロードします。<br/>
+        ・「削除」はチェックした行を削除します。<br/>
+        ・「試聴」は行の <b>data-id</b> を使って確実に再生します（署名URL→フォールバック）。<br/>
+      </div>
+
+      <div class="player-wrap">
+        <audio id="bgmPlayer" controls preload="none" playsinline style="width:100%;max-width:560px;display:block;margin:0 auto"></audio>
+      </div>
+
+      <div id="err" class="status error hidden"></div>
+    </div>
   </div>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+/* ================= 共通ユーティリティ ================= */
+const $ = (sel,root=document)=>root.querySelector(sel);
+const $$ = (sel,root=document)=>Array.from(root.querySelectorAll(sel));
 
-  <script>
-    // ===== 小ユーティリティ =====
-    const $ = (sel, el=document) => el.querySelector(sel);
-    const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
-    const toastEl = $('#toast');
-    const toast = (msg) => { toastEl.textContent = msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'), 1800); };
-    const fmtSize = (n) => {
+const setMsg = (t, isErr=false)=>{
+  const m = $('#msg'); if(!m) return;
+  m.textContent = t||'';
+  m.classList.toggle('error', !!isErr);
+};
+const showErr = (t)=>{ const e=$('#err'); if(!e) return; e.textContent=t||''; e.classList.toggle('hidden', !t); };
+
+const fmtSize = (n) => {
   const v = Number(n);
   if (!isFinite(v) || v <= 0) return '—';
   if (v >= 1024*1024*1024) return (v/1024/1024/1024).toFixed(2) + ' GB';
@@ -89,253 +97,208 @@
   if (v >= 1024)           return Math.round(v/1024) + ' KB';
   return v + ' B';
 };
-    const fmtDate = (iso) => {
+
+const fmtDate = (iso) => {
   try {
     if (!iso) return '—';
     const d = new Date(iso);
     if (isNaN(d)) return '—';
     const p = n => String(n).padStart(2,'0');
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  } catch {
-    return '—';
-  }
+  } catch { return '—'; }
 };
-  </script>
 
-  <script>
-    // ===== リストの取得と描画 =====
-    const tbody = $('#tbody');
-    const chkAll = $('#chkAll');
+const fmtTime = (sec) => {
+  const s = Math.max(0, Math.floor(sec||0));
+  const m = Math.floor(s/60), r = s%60;
+  return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+};
 
-    async function fetchList(){
-      const res = await fetch('/.netlify/functions/list', { credentials:'include' });
-      if(!res.ok) throw new Error('list http '+res.status);
-      const data = await res.json();
-      if(!data || !data.ok) throw new Error('list payload');
-      return data.items || data.list || [];
+/* ================= 再生（geturl→download フォールバック） ================= */
+const player = $('#bgmPlayer');
+
+async function getPlayableUrlById(id){
+  // 署名付きURL（または download フォールバックURL文字列）を取得
+  try{
+    const r = await fetch(`/.netlify/functions/geturl?id=${encodeURIComponent(id)}`, { credentials:'include' });
+    if(!r.ok) throw new Error('geturl '+r.status);
+    const js = await r.json();
+    if(js && js.ok && js.url) return js.url;
+  }catch{}
+  return `/.netlify/functions/download?id=${encodeURIComponent(id)}`;
+}
+
+async function playBgmById(id, btn){
+  if(!id) return;
+  try{
+    setMsg('音源URL取得中…');
+    const url = await getPlayableUrlById(id);
+    const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+
+    player.pause();
+    player.src = url + bust;
+    await player.play(); // クリックのユーザー操作内
+
+    setMsg('再生中');
+    if(btn){
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '▶ 再生中…';
+      const reset=()=>{ try{ btn.disabled=false; btn.textContent=orig; }catch{} };
+      player.addEventListener('pause', reset, { once:true });
+      player.addEventListener('ended', reset, { once:true });
+    }
+  }catch(err){
+    const name = err?.name||'', msg = err?.message||String(err);
+    if (name==='NotAllowedError' || name==='AbortError'){
+      showErr('再生がブロックされました。端末の音量/消音スイッチを確認し、もう一度押してください。');
+    }else{
+      showErr('再生に失敗しました：'+msg);
+    }
+  }
+}
+
+/* ================= DURATION を計測 ================= */
+async function probeDuration(id, td){
+  try{
+    const url = await getPlayableUrlById(id);
+    const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    const a = new Audio();
+    a.preload = 'metadata';
+    a.src = url + bust;
+    await new Promise((res,rej)=>{
+      const done=()=>{ a.removeEventListener('loadedmetadata', ok); a.removeEventListener('error', ng); };
+      const ok=()=>{ done(); res(); };
+      const ng=()=>{ done(); rej(new Error('audio meta error')); };
+      a.addEventListener('loadedmetadata', ok, { once:true });
+      a.addEventListener('error', ng, { once:true });
+    });
+    const dur = isFinite(a.duration) ? a.duration : 0;
+    if (td) td.textContent = dur ? fmtTime(dur) : '—';
+  }catch{
+    if (td) td.textContent = '—';
+  }
+}
+
+/* ================= 一覧の取得＆描画 ================= */
+async function loadList(){
+  showErr('');
+  setMsg('一覧を取得中…');
+  const tbody = $('#tbody');
+  tbody.innerHTML = `<tr><td colspan="6" class="center muted">読み込み中…</td></tr>`;
+
+  try{
+    const r = await fetch('/.netlify/functions/list', { credentials:'include' });
+    if(!r.ok) throw new Error('list '+r.status);
+    const data = await r.json();
+    if(!(data && data.ok && Array.isArray(data.items)))) throw new Error('bad payload');
+
+    const items = data.items;
+    if (items.length === 0){
+      tbody.innerHTML = `<tr><td colspan="6" class="center muted">ファイルはありません</td></tr>`;
+      setMsg('OK');
+      return;
     }
 
-    function renderList(items){
-      tbody.innerHTML = '';
-      if(!items.length){
-        tbody.innerHTML = '<tr><td colspan="6" class="muted">ファイルはまだありません</td></tr>';
-        return;
-      }
-      for(const it of items){
-        const tr = document.createElement('tr');
+    const frag = document.createDocumentFragment();
+    items.forEach(it=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="center"><input type="checkbox" class="rowchk" data-id="${it.id}"></td>
+        <td class="title num">${escapeHtml(it.title || '')}</td>
+        <td class="num">${fmtDate(it.date)}</td>
+        <td class="right num">${fmtSize(it.size)}</td>
+        <td class="center num"><span class="dur">--:--</span></td>
+        <td class="center">
+          <button class="btn ghost btn-preview" data-id="${it.id}">試聴</button>
+        </td>
+      `;
+      frag.appendChild(tr);
 
-        const tdChk = document.createElement('td');
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'rowchk';
-        cb.dataset.id = it.id; // 削除用
-        tdChk.appendChild(cb);
-        tr.appendChild(tdChk);
-
-        const tdTitle = document.createElement('td');
-        tdTitle.className = 'title';
-        tdTitle.textContent = it.title || it.id || '(no title)';
-        tr.appendChild(tdTitle);
-
-        const tdDate = document.createElement('td');
-        tdDate.className = 'date';
-        tdDate.textContent = fmtDate(it.uploaded || it.date);
-        tr.appendChild(tdDate);
-
-        const tdSize = document.createElement('td');
-        tdSize.className = 'size';
-        tdSize.textContent = fmtSize(it.size);
-        tr.appendChild(tdSize);
-
-        const tdDur = document.createElement('td');
-        tdDur.className = 'dur';
-        tdDur.textContent = '--:--';
-        tr.appendChild(tdDur);
-
-        const tdOps = document.createElement('td');
-        // ★ 試聴ボタン：必ず data-id を付ける
-        const btnPrev = document.createElement('button');
-        btnPrev.className = 'btn-preview';
-        btnPrev.textContent = '試聴';
-        btnPrev.dataset.id = it.id;       // ← これが超重要（プレイヤーが拾います）
-        tdOps.appendChild(btnPrev);
-        tr.appendChild(tdOps);
-
-        tbody.appendChild(tr);
-
-        // Duration は後追いで取得（失敗しても他は表示させる）
-        probeDuration(it.id).then(sec=>{
-          if (typeof sec === 'number' && isFinite(sec)) {
-            const m = Math.floor(sec / 60), s = Math.round(sec % 60);
-            tdDur.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-          }
-        }).catch(()=>{ /* 無視 */ });
-      }
-    }
-
-    async function reloadList(){
-      try{
-        const items = await fetchList();
-        renderList(items);
-      }catch(e){
-        tbody.innerHTML = '<tr><td colspan="6" class="muted">読み込みに失敗しました</td></tr>';
-        console.error(e);
-        toast('リスト取得に失敗');
-      }
-    }
-
-    // 音源の長さ取得（geturl → <audio>でmetadata）
-    async function probeDuration(id){
-      if (!id) return null;
-      let url = '';
-      try{
-        const r = await fetch(`/.netlify/functions/geturl?id=${encodeURIComponent(id)}`, { credentials:'include' });
-        const j = await r.json();
-        if (j && j.ok && j.url) url = j.url;
-      }catch{}
-      if (!url) url = `/.netlify/functions/download?id=${encodeURIComponent(id)}`;
-      url += (url.includes('?') ? '&':'?') + 'v=' + Date.now();
-
-      return new Promise((resolve,reject)=>{
-        const a = document.createElement('audio');
-        a.preload = 'metadata';
-        a.src = url;
-        const tid = setTimeout(()=>{ cleanup(); reject(new Error('meta timeout')); }, 8000);
-        a.addEventListener('loadedmetadata', ()=>{
-          cleanup();
-          const d = a.duration;
-          if (typeof d==='number' && isFinite(d) && d>0) resolve(d);
-          else reject(new Error('no duration'));
-        }, {once:true});
-        a.addEventListener('error', ()=>{ cleanup(); reject(new Error('audio error')); }, {once:true});
-        function cleanup(){ clearTimeout(tid); a.src=''; }
-      });
-    }
-  </script>
-
-  <script>
-    // ===== 追加（アップロード） =====
-    const fileInput = $('#fileInput');
-    const btnPick   = $('#btnPick');
-    const btnUpload = $('#btnUpload');
-    const pickName  = $('#pickName');
-
-    btnPick.addEventListener('click', ()=> fileInput.click());
-    fileInput.addEventListener('change', ()=>{
-      const f = fileInput.files && fileInput.files[0];
-      pickName.textContent = f ? (f.name + ' (' + fmtSize(f.size) + ')') : '';
+      // DURATION を非同期で反映
+      const durCell = tr.querySelector('.dur');
+      probeDuration(it.id, durCell);
     });
 
-    btnUpload.addEventListener('click', async ()=>{
-      const f = fileInput.files && fileInput.files[0];
-      if (!f) { toast('ファイルを選択してください'); return; }
-      try{
-        const fd = new FormData();
-        fd.append('file', f);
-        const r = await fetch('/.netlify/functions/upload', { method:'POST', body: fd, credentials:'include' });
-        const j = await r.json();
-        if (!r.ok || !j || !j.ok) throw new Error(j?.error || 'upload failed');
-        toast('アップロード完了');
-        fileInput.value = ''; pickName.textContent = '';
-        await reloadList();
-      }catch(e){
-        console.error(e);
-        toast('アップロードに失敗しました');
-      }
+    tbody.innerHTML='';
+    tbody.appendChild(frag);
+    setMsg(`OK（${items.length}件）`);
+  }catch(err){
+    tbody.innerHTML = `<tr><td colspan="6" class="center error">一覧の取得に失敗しました</td></tr>`;
+    showErr(String(err?.message || err));
+  }
+}
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+/* ================= 追加（アップロード） ================= */
+$('#btnAdd').addEventListener('click', async ()=>{
+  showErr('');
+  const f = $('#fileInput').files?.[0];
+  if(!f){ alert('ファイルを選択してください'); return; }
+
+  try{
+    setMsg('アップロード中…');
+    const fd = new FormData();
+    fd.append('file', f);
+    const r = await fetch('/.netlify/functions/upload', { method:'POST', body:fd, credentials:'include' });
+    if(!r.ok) throw new Error('upload '+r.status);
+    const js = await r.json();
+    if(!(js && js.ok)) throw new Error('upload error');
+
+    setMsg('アップロード完了。一覧を更新します…');
+    $('#fileInput').value = '';
+    await loadList();
+  }catch(err){
+    showErr('アップロードに失敗しました：'+ (err?.message || err));
+  }
+});
+
+/* ================= 削除 ================= */
+$('#btnDelete').addEventListener('click', async ()=>{
+  showErr('');
+  const ids = $$('#tbody .rowchk:checked').map(c => c.dataset.id).filter(Boolean);
+  if(ids.length===0){ alert('削除する行にチェックを付けてください'); return; }
+  if(!confirm(`${ids.length}件を削除しますか？`)) return;
+
+  try{
+    setMsg('削除中…');
+    const r = await fetch('/.netlify/functions/remove', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ ids }),
+      credentials:'include'
     });
-  </script>
+    if(!r.ok) throw new Error('remove '+r.status);
+    const js = await r.json();
+    if(!(js && js.ok)) throw new Error('remove error');
 
-  <script>
-    // ===== 削除 =====
-    const btnRemove = $('#btnRemove');
-    btnRemove.addEventListener('click', async ()=>{
-      const ids = $$('.rowchk:checked').map(cb=>cb.dataset.id);
-      if (!ids.length){ toast('削除対象が選ばれていません'); return; }
-      if (!confirm(ids.length + ' 件を削除しますか？')) return;
-      try{
-        const r = await fetch('/.netlify/functions/remove', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ ids }),
-          credentials:'include'
-        });
-        const j = await r.json().catch(()=>null);
-        if (!r.ok || !j || !j.ok) throw new Error(j?.error || 'remove failed');
-        toast('削除しました');
-        await reloadList();
-      }catch(e){
-        console.error(e);
-        toast('削除に失敗しました');
-      }
-    });
+    setMsg('削除完了。一覧を更新します…');
+    await loadList();
+  }catch(err){
+    showErr('削除に失敗しました：'+ (err?.message || err));
+  }
+});
 
-    // 全選択
-    $('#chkAll').addEventListener('change', (e)=>{
-      const on = e.currentTarget.checked;
-      $$('.rowchk').forEach(cb=>cb.checked = on);
-    });
+/* ================= 試聴ボタン（data-id使用） ================= */
+document.addEventListener('click', (ev)=>{
+  const btn = ev.target.closest('.btn-preview');
+  if(!btn) return;
+  const id = btn.dataset.id;
+  if(!id){ alert('音声IDが見つかりません'); return; }
+  playBgmById(id, btn);
+});
 
-    // 再読込
-    $('#btnRefresh').addEventListener('click', reloadList);
-  </script>
+/* ================= 全選択チェック ================= */
+$('#chkAll').addEventListener('change', (e)=>{
+  const on = e.target.checked;
+  $$('#tbody .rowchk').forEach(c => c.checked = on);
+});
 
-  <!-- ============================================================
-       最小構成の「確実に鳴る」試聴プレイヤー（geturl → download）
-       ボタンは .btn-preview[data-id="audio/…mp3"] を前提にしています
-  ============================================================ -->
-  <script>
-  (() => {
-    const player = document.getElementById('bgmPlayer');
-
-    // どこからでも呼べる再生ヘルパ
-    window.playBgmById = async function(id){
-      if (!id) throw new Error('id required');
-      let url = '';
-      try {
-        const res = await fetch(`/.netlify/functions/geturl?id=${encodeURIComponent(id)}`, { credentials:'include' });
-        if (!res.ok) throw new Error('geturl http '+res.status);
-        const data = await res.json();
-        if (!data.ok || !data.url) throw new Error('geturl bad payload');
-        url = data.url;
-      } catch {
-        url = `/.netlify/functions/download?id=${encodeURIComponent(id)}`;
-      }
-      const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-      player.pause();
-      player.src = url + bust;
-      player.currentTime = 0;
-      await player.play(); // ユーザー操作内
-    };
-
-    // 試聴ボタンのクリックで再生
-    document.addEventListener('click', async (ev)=>{
-      const btn = ev.target.closest('.btn-preview[data-id]');
-      if (!btn) return;
-      const id = btn.dataset.id;
-      const original = btn.textContent;
-      try{
-        btn.disabled = true;
-        btn.textContent = '▶ 再生中…';
-        await window.playBgmById(id);
-      }catch(err){
-        const name = err?.name || '';
-        if (name==='NotAllowedError' || name==='AbortError'){
-          alert('再生がブロックされました。音量/消音設定を確認し、もう一度「試聴」を押してください。');
-        }else{
-          alert('再生に失敗しました：' + (err?.message || err));
-        }
-      }finally{
-        const reset = ()=>{ btn.disabled = false; btn.textContent = original; };
-        player.onpause = reset;
-        player.onended = reset;
-      }
-    });
-  })();
-  </script>
-
-  <script>
-    // 初期ロード
-    reloadList();
-  </script>
+/* 初期化 */
+loadList();
+</script>
 </body>
 </html>
