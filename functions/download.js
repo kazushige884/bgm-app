@@ -13,10 +13,10 @@ export default async (request) => {
       return json({ ok:false, error:'bad-id', siteId: process.env.NETLIFY_SITE_ID || null }, 400);
     }
 
-    const store = getStore({ name: 'bgm-store-v2' });
+    const store = getStore({ name: 'bgm-store-v2' }); // ← 統一名に合わせてください
 
-    // list で存在確認（診断）
-    let listed = false; let sample = []; let count = 0;
+    // ---- 診断：list で存在可否 ----
+    let listed = false; let count = 0; let sample = [];
     try {
       const res = await store.list().catch(() => ({}));
       const blobs = Array.isArray(res?.blobs) ? res.blobs
@@ -29,12 +29,11 @@ export default async (request) => {
       sample = keys.slice(0, 5);
     } catch {}
 
-    // 取得（ArrayBufferに正規化）
     const toAB = async (x) => {
       if (!x) return null;
       if (x instanceof ArrayBuffer) return x;
       if (x instanceof Uint8Array) return x.buffer;
-      if (typeof x.arrayBuffer === 'function') return await x.arrayBuffer();
+      if (typeof x.arrayBuffer === 'function') return await x.arrayBuffer(); // Blob/Response対応
       if (x.body) {
         const b = x.body;
         if (b instanceof ArrayBuffer) return b;
@@ -44,30 +43,74 @@ export default async (request) => {
       return null;
     };
 
-    let got = null, buf = null, ct = 'audio/mpeg', total;
+    let buf = null;
+    let ct = 'audio/mpeg';
+    let total;
+
+    // 0) オプションなしの get（あなたの環境で通る可能性が高い）
     try {
-      got = await store.get(id);
-      if (got && typeof got === 'object') {
-        ct = got.contentType || ct;
-        total = Number(got.size || got?.metadata?.size || 0) || undefined;
+      const any = await store.get(id);
+      if (any) {
+        const ab = await toAB(any);
+        if (ab) {
+          buf = ab;
+          if (any && typeof any === 'object') {
+            ct = any.contentType || ct;
+            total = Number(any.size || any?.metadata?.size || 0) || undefined;
+          }
+        }
       }
     } catch {}
-    buf = await toAB(got);
 
+    // 1) arrayBuffer 明示
     if (!buf) {
       try {
-        const streamed = await store.get(id, { type: 'stream' });
-        if (streamed && streamed.body) {
-          ct = streamed.contentType || ct;
-          total = Number(streamed.size || 0) || total;
+        const a = await store.get(id, { type: 'arrayBuffer' });
+        if (a) {
+          const ab = await toAB(a);
+          if (ab) {
+            buf = ab;
+            if (a && typeof a === 'object') {
+              ct = a.contentType || ct;
+              total = Number(a.size || a?.metadata?.size || 0) || undefined;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 2) blob
+    if (!buf) {
+      try {
+        const b = await store.get(id, { type: 'blob' });
+        if (b) {
+          const ab = await toAB(b);
+          if (ab) {
+            buf = ab;
+            if (b && typeof b === 'object') {
+              ct = b.contentType || ct;
+              total = Number(b.size || b?.metadata?.size || 0) || total;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 3) stream
+    if (!buf) {
+      try {
+        const s = await store.get(id, { type: 'stream' });
+        if (s && s.body) {
+          ct = s.contentType || ct;
+          total = Number(s.size || 0) || total;
           const chunks = [];
-          const reader = streamed.body.getReader();
+          const reader = s.body.getReader();
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             if (value) chunks.push(value);
           }
-          const merged = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
+          const merged = new Uint8Array(chunks.reduce((sum, c) => sum + c.length, 0));
           let off = 0; for (const c of chunks) { merged.set(c, off); off += c.length; }
           buf = merged.buffer;
         }
