@@ -73,6 +73,9 @@
   </div>
 </div>
 
+<!-- 共有の隠しプレイヤー（メタデータ取得用） -->
+<audio id="preview" preload="metadata" class="hidden"></audio>
+
 <script>
 /* ========= ヘルパー ========= */
 const $ = (id)=>document.getElementById(id);
@@ -90,7 +93,6 @@ const fmtDateISO = (s)=>{
   return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}\n${z(d.getHours())}:${z(d.getMinutes())}`;
 };
 const parseDateFromKey = (key)=>{
-  // key 例: audio/2025-08-24T081846564Z-xxxx.mp3 → 2025-08-24T08:18:46Z に整形
   const m = String(key).match(/^audio\/([^/-]+)/);
   if(!m) return null;
   const raw = m[1];
@@ -125,9 +127,8 @@ async function apiRemove(ids){
 let items = []; // {id,title,url,size?,date?}
 
 function setError(msg){ $('errBox').textContent = msg || ''; }
-function setCount(){
-  $('countText').textContent = `${items.length} 件`;
-}
+function setCount(){ $('countText').textContent = `${items.length} 件`; }
+
 function makeRow(it){
   const tr = document.createElement('tr');
 
@@ -155,14 +156,22 @@ function makeRow(it){
   btn.className = 'pill'; btn.title='1.5秒だけ試聴';
   btn.textContent = '▶';
   btn.addEventListener('click', ()=>{
-    const a = new Audio(it.url);
-    a.addEventListener('loadedmetadata', ()=>{
+    const a = $('preview');
+    // キャッシュバスターをつけて毎回 loadedmetadata を発火させる
+    const url = it.url + (it.url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    a.preload = 'metadata';
+    a.src = url;
+
+    const onMeta = ()=>{
       if(Number.isFinite(a.duration)){
-        const m=Math.floor(a.duration/60), s=Math.round(a.duration%60);
+        const m = Math.floor(a.duration/60), s = Math.round(a.duration%60);
         tdDur.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
       }
-    });
-    a.play().catch(()=>{});
+      a.removeEventListener('loadedmetadata', onMeta);
+    };
+    a.addEventListener('loadedmetadata', onMeta);
+
+    a.play().catch(()=>{});                 // ユーザー操作起点なのでOK
     setTimeout(()=>{ try{ a.pause(); }catch{} }, 1500);
   });
   tdPlay.appendChild(btn);
@@ -174,9 +183,7 @@ function makeRow(it){
 function render(){
   const tbody = $('tbody');
   tbody.innerHTML = '';
-  for(const it of items){
-    tbody.appendChild(makeRow(it));
-  }
+  for(const it of items){ tbody.appendChild(makeRow(it)); }
   setCount();
 }
 
@@ -196,13 +203,8 @@ $('filePicker').addEventListener('change', async (e)=>{
   try{
     const res = await apiUpload(f);
     if(res?.ok){
-      // 即時反映：レスポンスに size/date を含めているのでそのまま利用
       items.unshift({
-        id: res.id,
-        title: res.title,
-        url: res.url,
-        size: res.size,
-        date: res.date
+        id: res.id, title: res.title, url: res.url, size: res.size, date: res.date
       });
       render();
     }else{
@@ -219,7 +221,6 @@ $('btnDel').addEventListener('click', async ()=>{
               .map(c=>c.dataset.id);
   if(ids.length===0){ setError('削除するファイルをチェックしてください'); return; }
   if(!confirm(`${ids.length} 件を削除します。よろしいですか？`)) return;
-
   try{
     const res = await apiRemove(ids);
     if(res?.ok){
@@ -241,7 +242,6 @@ $('btnDel').addEventListener('click', async ()=>{
     const res = await apiList();
     if(res?.ok){
       items = Array.isArray(res.items) ? res.items : [];
-      // 新しい順に（list関数でもソートしているが念のため）
       items.sort((a,b)=>{
         const ad = a.date || parseDateFromKey(a.id);
         const bd = b.date || parseDateFromKey(b.id);
