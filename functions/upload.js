@@ -3,16 +3,16 @@ import { getStore } from '@netlify/blobs';
 import { preflight, json } from './_lib.js';
 
 export default async (request) => {
-  // CORS/OPTIONS
   const pf = preflight(request); if (pf) return pf;
   if (request.method !== 'POST') return json({ error: 'method' }, 405);
 
   try {
-    const form = await request.formData();
-    const file = form.get('file');
-    if (!file) return json({ error: 'no file' }, 400);
+    const form = await request.formData().catch(() => null);
+    if (!form) return json({ ok:false, error:'no-form' }, 400);
 
-    // ---- MIME が空の端末（iOS/Safari など）でも通す ----
+    const file = form.get('file');
+    if (!file) return json({ ok:false, error:'no-file' }, 400);
+
     const name = String(file.name || 'audio.mp3');
     const ext  = (name.match(/\.[a-z0-9]+$/i)?.[0] || '.mp3').toLowerCase();
     const typeFromPicker = String(file.type || '');
@@ -26,19 +26,15 @@ export default async (request) => {
     };
     const contentType = typeFromPicker || guessByExt(ext);
 
-    // 50MB制限（必要に応じて調整）
     const buf = new Uint8Array(await file.arrayBuffer());
-    if (buf.byteLength > 50 * 1024 * 1024) {
-      return json({ error: 'too large (limit 50MB)' }, 400);
-    }
+    if (buf.byteLength <= 0) return json({ ok:false, error:'empty-file' }, 400);
+    if (buf.byteLength > 50 * 1024 * 1024) return json({ ok:false, error:'too-large' }, 400);
 
-    // 保存キー：ISOスタンプ（記号なし）+ ランダム + 元拡張子
-    // 例：audio/2025-08-24T075337923Z-abc123.mp3
-    const stamp = new Date().toISOString().replace(/[:.]/g, ''); // 2025-08-24T075337923Z
+    // 例: audio/2025-08-24T081846564Z-xxxxx.mp3
+    const stamp = new Date().toISOString().replace(/[:.]/g, '');
     const key = `audio/${stamp}-${Math.random().toString(36).slice(2)}${ext}`;
 
     const store = getStore({ name: 'bgm-store' });
-
     await store.set(key, buf, {
       contentType,
       metadata: {
@@ -49,7 +45,6 @@ export default async (request) => {
       addRandomSuffix: false,
     });
 
-    // 再生URLは download 関数経由
     const url = `/.netlify/functions/download?id=${encodeURIComponent(key)}`;
 
     return json({
@@ -61,9 +56,6 @@ export default async (request) => {
       date: new Date().toISOString(),
     });
   } catch (err) {
-    return json(
-      { ok: false, errorType: err?.name || 'Error', errorMessage: String(err?.message || err) },
-      500
-    );
+    return json({ ok:false, errorType: err?.name || 'Error', errorMessage: String(err?.message || err) }, 500);
   }
 };
