@@ -9,7 +9,7 @@ export default async (request) => {
   try {
     const store = getStore({ name: 'bgm-store' });
 
-    // Blobs v6 互換：list() の戻り形が環境で少し違うので吸収
+    // list() は環境で戻り形が違うことがあるので吸収
     const res = await store.list().catch(() => ({}));
     const blobs = Array.isArray(res?.blobs) ? res.blobs
                 : Array.isArray(res?.files) ? res.files
@@ -21,17 +21,25 @@ export default async (request) => {
       const key = b.key || b.name || b.id || '';
       if (!key || !String(key).startsWith('audio/')) continue;
 
-      // できるだけ情報を寄せ集め
-      const size = Number(b.size || (b.metadata && b.metadata.size) || 0) || undefined;
-      const date = b.uploadedAt || (b.metadata && b.metadata.uploadedAt) || undefined;
-      const title = (b.metadata && b.metadata.title) || key.split('/').pop();
+      const size = Number(b.size || b?.metadata?.size || 0) || undefined;
+      const date = b.uploadedAt || b?.metadata?.uploadedAt || undefined;
+      const title = b?.metadata?.title || key.split('/').pop();
 
-      const url = `/.netlify/functions/download?id=${encodeURIComponent(key)}`;
+      // まず署名付きURLを試す（60秒有効）
+      let url = '';
+      try{
+        if (typeof store.getSignedUrl === 'function') {
+          url = await store.getSignedUrl({ key, expires: 60 });
+        }
+      }catch(_) { /* フォールバックへ */ }
+
+      // 使えない環境なら従来のdownload関数を使用
+      if (!url) url = `/.netlify/functions/download?id=${encodeURIComponent(key)}`;
 
       items.push({ id: key, title, url, size, date });
     }
 
-    // 新しい順（キーや日付から推定）
+    // 新しい順に
     items.sort((a,b)=>{
       const ad = a.date || a.id; const bd = b.date || b.id;
       return ad < bd ? 1 : ad > bd ? -1 : 0;
