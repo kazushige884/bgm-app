@@ -27,6 +27,6 @@ export default async (request) => {
     visibility: 'public'
   });
 
-  const url = await store.getPublicUrl(key);
-  return json({ ok: true, id: key, url, title: file.name, size: buf.byteLength, date: new Date().toISOString() });
+  const url = `/.netlify/functions/download?id=${encodeURIComponent(key)}`;
+return json({ ok: true, id: key, url, title: file.name, size: buf.byteLength, date: new Date().toISOString() });
 };

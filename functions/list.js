@@ -13,7 +13,7 @@ export default async (request) => {
     title: b.key.split('/').pop(),
     size: b.size,
     date: b.createdAt,
-    url: await store.getPublicUrl(b.key)
+    url: `/.netlify/functions/download?id=${encodeURIComponent(b.key)}`
   })));
 
   // 新しい順
