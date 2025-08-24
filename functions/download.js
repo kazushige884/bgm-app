@@ -1,60 +1,121 @@
 // functions/download.js
 import { getStore } from '@netlify/blobs';
-import { preflight } from './_lib.js';
+import { preflight, cors, json } from './_lib.js';
 
 export default async (request) => {
-  // CORS・OPTIONS の事前応答（お使いの _lib.js に合わせています）
+  // CORS / OPTIONS
   const pf = preflight(request);
   if (pf) return pf;
-
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    return new Response('method not allowed', { status: 405 });
-  }
 
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
-    if (!id) return new Response('id required', { status: 400 });
+    if (!id || !id.startsWith('audio/')) {
+      return new Response('bad id', { status: 400, headers: cors() });
+    }
 
     const store = getStore({ name: 'bgm-store' });
 
-    // --- 第一候補：署名付きURLへリダイレクト（Range/Content-Type はストレージに委譲）---
-    try {
-      // API 互換のため存在チェック
-      if (typeof store.getSignedUrl === 'function') {
-        // 60秒だけ有効な一時URL
-        const signed = await store.getSignedUrl({ key: id, expires: 60 });
-        if (signed) {
-          return new Response(null, {
-            status: 302,
-            headers: {
-              Location: signed,
-              // ブラウザにキャッシュさせない（常に最新を取る）
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-            },
-          });
-        }
+    // ---- 1) まずは汎用 get(id) で取得（環境により戻り型が違う） ----
+    let got = await store.get(id); // 返り値の形は色々: null | {body, contentType, size} | Blob/Response | ArrayBuffer | Uint8Array
+    if (!got) return new Response('not found', { status: 404, headers: cors() });
+
+    // ---- 2) ArrayBuffer に正規化 ----
+    let contentType = 'audio/mpeg';
+    let total = undefined;
+    let buf;
+
+    const ensureArrayBuffer = async (x) => {
+      if (!x) return null;
+      if (x instanceof ArrayBuffer) return x;
+      if (x instanceof Uint8Array) return x.buffer;
+      if (typeof x.arrayBuffer === 'function') return await x.arrayBuffer(); // Blob/Response 互換
+      if (x.body) {
+        // { body, contentType?, size? }
+        contentType = x.contentType || contentType;
+        total = Number(x.size || 0) || undefined;
+        const b = x.body;
+        if (b instanceof ArrayBuffer) return b;
+        if (b instanceof Uint8Array) return b.buffer;
+        if (typeof b.arrayBuffer === 'function') return await b.arrayBuffer();
       }
-    } catch (_) {
-      // 署名URLが使えない環境は下のフォールバックへ
+      // 最後の手段：文字列ならバイナリ化不可 → エラー
+      return null;
+    };
+
+    buf = await ensureArrayBuffer(got);
+    if (!buf) {
+      // 一部環境では get(id, { type:'stream' }) が取れることもある
+      try {
+        const streamed = await store.get(id, { type: 'stream' });
+        if (streamed && streamed.body) {
+          contentType = streamed.contentType || contentType;
+          total = Number(streamed.size || 0) || undefined;
+          // stream → ArrayBuffer に吸収
+          const chunks = [];
+          const reader = streamed.body.getReader();
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) chunks.push(value);
+          }
+          const merged = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
+          let off = 0;
+          for (const c of chunks) { merged.set(c, off); off += c.length; }
+          buf = merged.buffer;
+        }
+      } catch (_) {}
     }
 
-    // --- フォールバック：Blobs からストリーム取得して返す（Range なし）---
-    const blob = await store.get(id, { type: 'stream' });
-    if (!blob || !blob.body) return new Response('not found', { status: 404 });
+    if (!buf) {
+      return new Response('not found', { status: 404, headers: cors() });
+    }
 
-    const headers = {
-      'Content-Type': blob.contentType || 'audio/mpeg',
-      ...(blob.size ? { 'Content-Length': String(blob.size) } : {}),
-      // Range は 200 配信時も bytes を明示（ブラウザの挙動安定化）
+    // サイズ判定（上で total が未確定ならここで決定）
+    const fullLength = total ?? buf.byteLength;
+
+    // ---- 3) Range 対応 ----
+    const baseHeaders = {
+      ...cors(),
+      'Content-Type': contentType,
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-cache',
     };
 
-    if (request.method === 'HEAD') return new Response(null, { status: 200, headers });
-    return new Response(blob.body, { status: 200, headers });
+    const range = request.headers.get('Range'); // 例: "bytes=0-"
+    if (range) {
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      let start = Number(m?.[1] || 0);
+      let end = Number(m?.[2] || (fullLength - 1));
+      if (!Number.isFinite(start) || isNaN(start)) start = 0;
+      if (!Number.isFinite(end) || isNaN(end)) end = fullLength - 1;
+      start = Math.max(0, Math.min(start, fullLength - 1));
+      end = Math.max(start, Math.min(end, fullLength - 1));
+
+      const chunk = buf.slice(start, end + 1);
+      return new Response(chunk, {
+        status: 206,
+        headers: {
+          ...baseHeaders,
+          'Content-Length': String(chunk.byteLength),
+          'Content-Range': `bytes ${start}-${end}/${fullLength}`,
+        },
+      });
+    }
+
+    // ---- 4) 全体返却 ----
+    return new Response(buf, {
+      status: 200,
+      headers: {
+        ...baseHeaders,
+        'Content-Length': String(fullLength),
+      },
+    });
   } catch (err) {
-    // 500 の原因を前面に出す
-    return new Response('download error: ' + String(err?.message || err), { status: 500 });
+    return json(
+      { ok: false, error: 'download error', message: String(err?.message || err) },
+      500
+    );
   }
 };
