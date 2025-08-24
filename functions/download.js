@@ -1,80 +1,60 @@
 // functions/download.js
 import { getStore } from '@netlify/blobs';
-import { preflight, json, cors } from './_lib.js';
+import { preflight } from './_lib.js';
 
 export default async (request) => {
-  // CORS/OPTIONS
-  const pf = preflight(request); if (pf) return pf;
+  // CORS・OPTIONS の事前応答（お使いの _lib.js に合わせています）
+  const pf = preflight(request);
+  if (pf) return pf;
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405 });
+  }
 
   try {
-    const u = new URL(request.url);
-    const id = u.searchParams.get('id');
-    if (!id || !id.startsWith('audio/')) {
-      return json({ error: 'bad id' }, 400);
-    }
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    if (!id) return new Response('id required', { status: 400 });
 
     const store = getStore({ name: 'bgm-store' });
 
-    // 返り値（環境差）を ArrayBuffer に正規化
-    let data = await store.get(id);
-    let contentType = 'audio/mpeg';
-    if (!data) return json({ error: 'not found' }, 404);
-
-    if (data?.body) {                 // { body, contentType }
-      contentType = data.contentType || contentType;
-      data = data.body;               // ArrayBuffer
-    } else if (typeof data?.arrayBuffer === 'function') {
-      data = await data.arrayBuffer();// Blob/Response風
-    } else if (data instanceof Uint8Array) {
-      data = data.buffer;
-    } else if (!(data instanceof ArrayBuffer)) {
-      return json({ error: 'unsupported type' }, 500);
+    // --- 第一候補：署名付きURLへリダイレクト（Range/Content-Type はストレージに委譲）---
+    try {
+      // API 互換のため存在チェック
+      if (typeof store.getSignedUrl === 'function') {
+        // 60秒だけ有効な一時URL
+        const signed = await store.getSignedUrl({ key: id, expires: 60 });
+        if (signed) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              Location: signed,
+              // ブラウザにキャッシュさせない（常に最新を取る）
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+            },
+          });
+        }
+      }
+    } catch (_) {
+      // 署名URLが使えない環境は下のフォールバックへ
     }
 
-    const total = data.byteLength;
-    const range = request.headers.get('Range'); // 例: "bytes=0-1023"
+    // --- フォールバック：Blobs からストリーム取得して返す（Range なし）---
+    const blob = await store.get(id, { type: 'stream' });
+    if (!blob || !blob.body) return new Response('not found', { status: 404 });
 
-    // 基本ヘッダ（CORS + キャッシュ + Range可）
-    const baseHeaders = {
-      ...cors(),
-      'Content-Type': contentType,
+    const headers = {
+      'Content-Type': blob.contentType || 'audio/mpeg',
+      ...(blob.size ? { 'Content-Length': String(blob.size) } : {}),
+      // Range は 200 配信時も bytes を明示（ブラウザの挙動安定化）
       'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
     };
 
-    if (range) {
-      const m = range.match(/bytes=(\d*)-(\d*)/);
-      let start = Number(m?.[1] || 0);
-      let end   = Number(m?.[2] || (total - 1));
-      if (!Number.isFinite(start) || isNaN(start)) start = 0;
-      if (!Number.isFinite(end)   || isNaN(end))   end   = total - 1;
-      start = Math.max(0, Math.min(start, total - 1));
-      end   = Math.max(start, Math.min(end, total - 1));
-
-      const chunk = data.slice(start, end + 1);
-      return new Response(chunk, {
-        status: 206, // Partial Content
-        headers: {
-          ...baseHeaders,
-          'Content-Length': String(chunk.byteLength),
-          'Content-Range': `bytes ${start}-${end}/${total}`,
-          'Cache-Control': 'public, max-age=3600',
-        },
-      });
-    }
-
-    // Rangeなし（全体）
-    return new Response(data, {
-      status: 200,
-      headers: {
-        ...baseHeaders,
-        'Content-Length': String(total),
-        'Cache-Control': 'public, max-age=3600',
-      },
-    });
+    if (request.method === 'HEAD') return new Response(null, { status: 200, headers });
+    return new Response(blob.body, { status: 200, headers });
   } catch (err) {
-    return json(
-      { ok:false, errorType: err?.name || 'Error', errorMessage: String(err?.message || err) },
-      500
-    );
+    // 500 の原因を前面に出す
+    return new Response('download error: ' + String(err?.message || err), { status: 500 });
   }
 };
