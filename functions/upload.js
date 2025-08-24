@@ -14,7 +14,7 @@ export default async (request) => {
     }
 
     // ★ 全関数と同じストア名に統一 ★
-    const store = getStore({ name: 'bgm-store' });
+    const store = getStore({ name: 'bgm-store-v2' });
 
     // キーは audio/ 固定（download/list/debug もこの前提）
     const now = new Date();

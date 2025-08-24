@@ -7,7 +7,7 @@ export default async (request) => {
     const u = new URL(request.url);
     const id = u.searchParams.get('id') || '';
 
-    const store = getStore({ name: 'bgm-store' });
+    const store = getStore({ name: 'bgm-store-v2' });
     const res = await store.list().catch(() => ({}));
     const blobs = Array.isArray(res?.blobs) ? res.blobs
                 : Array.isArray(res?.files) ? res.files

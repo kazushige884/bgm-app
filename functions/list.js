@@ -7,7 +7,7 @@ export default async (request) => {
   if (request.method !== 'GET') return json({ ok:false, error:'method' }, 405);
 
   try {
-    const store = getStore({ name: 'bgm-store' });
+    const store = getStore({ name: 'bgm-store-v2' });
     const res = await store.list().catch(() => ({}));
 
     const blobs = Array.isArray(res?.blobs) ? res.blobs

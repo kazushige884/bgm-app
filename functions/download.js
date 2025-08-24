@@ -13,7 +13,7 @@ export default async (request) => {
       return json({ ok:false, error:'bad-id', siteId: process.env.NETLIFY_SITE_ID || null }, 400);
     }
 
-    const store = getStore({ name: 'bgm-store' });
+    const store = getStore({ name: 'bgm-store-v2' });
 
     // list で存在確認（診断）
     let listed = false; let sample = []; let count = 0;

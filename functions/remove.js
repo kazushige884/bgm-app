@@ -38,7 +38,7 @@ export default async (request) => {
 
     if (!ids.length) return json({ ok:false, error:'no-ids' }, 400);
 
-    const store = getStore({ name: 'bgm-store' });
+    const store = getStore({ name: 'bgm-store-v2' });
 
     const delOne = async (key) => {
       if (!String(key).startsWith('audio/')) return;

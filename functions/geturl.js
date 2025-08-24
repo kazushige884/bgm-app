@@ -17,7 +17,7 @@ export default async (request) => {
       return json({ ok:false, error:'bad-id' }, 400);
     }
 
-    const store = getStore({ name: 'bgm-store' });
+    const store = getStore({ name: 'bgm-store-v2' });
 
     if (typeof store.getSignedUrl !== 'function') {
       return json({ ok:false, error:'signed-url-not-supported' }, 500);
