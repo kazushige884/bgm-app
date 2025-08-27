@@ -28,7 +28,6 @@
   .center{text-align:center}
   .muted{color:#6b7280}
   .note{font-size:12px;color:#6b7280;margin-top:8px}
-  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .hidden{display:none !important}
   .player-wrap{margin:16px 0}
   .status{margin-top:10px;font-size:14px;color:#374151}
@@ -78,276 +77,115 @@
   </div>
 
 <script>
-/* ================= 共通ユーティリティ ================= */
+/* ========== 共通ユーティリティ ========== */
 const $ = (sel,root=document)=>root.querySelector(sel);
 const $$ = (sel,root=document)=>Array.from(root.querySelectorAll(sel));
+const setMsg = (t, isErr=false)=>{ const m=$('#msg'); if(!m)return; m.textContent=t||''; m.classList.toggle('error',!!isErr); };
+const showErr=(t)=>{ const e=$('#err'); if(!e)return; e.textContent=t||''; e.classList.toggle('hidden',!t); };
 
-const setMsg = (t, isErr=false)=>{
-  const m = $('#msg'); if(!m) return;
-  m.textContent = t||'';
-  m.classList.toggle('error', !!isErr);
-};
-const showErr = (t)=>{ const e=$('#err'); if(!e) return; e.textContent=t||''; e.classList.toggle('hidden', !t); };
+const fmtSize=(n)=>{ const v=Number(n); if(!isFinite(v)||v<=0)return '—'; if(v>=1e9)return(v/1e9).toFixed(2)+' GB'; if(v>=1e6)return(v/1e6).toFixed(1)+' MB'; if(v>=1e3)return Math.round(v/1e3)+' KB'; return v+' B'; };
+const fmtDate=(iso)=>{ try{ if(!iso)return '—'; const d=new Date(iso); if(isNaN(d))return '—'; const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }catch{return '—';}};
+const fmtTime=(sec)=>{const s=Math.max(0,Math.floor(sec||0));const m=Math.floor(s/60),r=s%60;return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;};
+const escapeHtml=(s)=>String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
-const fmtSize = (n) => {
-  const v = Number(n);
-  if (!isFinite(v) || v <= 0) return '—';
-  if (v >= 1024*1024*1024) return (v/1024/1024/1024).toFixed(2) + ' GB';
-  if (v >= 1024*1024)      return (v/1024/1024).toFixed(1) + ' MB';
-  if (v >= 1024)           return Math.round(v/1024) + ' KB';
-  return v + ' B';
-};
-
-const fmtDate = (iso) => {
-  try {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    if (isNaN(d)) return '—';
-    const p = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  } catch { return '—'; }
-};
-
-const fmtTime = (sec) => {
-  const s = Math.max(0, Math.floor(sec||0));
-  const m = Math.floor(s/60), r = s%60;
-  return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
-};
-const escapeHtml = (s)=> String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-
-/* ================= 再生URL（geturl→download フォールバック） ================= */
-const player = $('#bgmPlayer');
-
+/* ========== 再生URL取得 ========== */
+const player=$('#bgmPlayer');
 async function getPlayableUrlById(id){
   try{
-    const r = await fetch(`/.netlify/functions/geturl?id=${encodeURIComponent(id)}`, { credentials:'include' });
-    if(!r.ok) throw new Error('geturl '+r.status);
-    const js = await r.json();
-    if(js && js.ok && js.url) return js.url;
+    const r=await fetch(`/.netlify/functions/geturl?id=${encodeURIComponent(id)}`,{credentials:'include'});
+    if(!r.ok)throw new Error('geturl '+r.status);
+    const js=await r.json();
+    if(js&&js.ok&&js.url)return js.url;
   }catch{}
   return `/.netlify/functions/download?id=${encodeURIComponent(id)}`;
 }
 
-/* ================= 軽量メタ取得（size/dateの穴埋め） ================= */
-async function fillMetaByHead(id, tds){
+/* ========== size/date の穴埋め ========== */
+async function fillMetaByHead(id,tds){
   try{
-    const url = await getPlayableUrlById(id);
-    // Range 0-0 で最小取得 → Content-Range/Last-Modified から全長/日時を推定
-    const resp = await fetch(url, { headers:{ Range:'bytes=0-0' }, credentials:'include' });
-    // 404 などは握りつぶして '—' 表示
-    if (!resp.ok) throw new Error('head '+resp.status);
+    const url=await getPlayableUrlById(id);
+    const resp=await fetch(url,{headers:{Range:'bytes=0-0'},credentials:'include'});
+    if(!resp.ok)throw new Error('head '+resp.status);
 
-    // サイズは Content-Range: "bytes 0-0/12345" を優先
-    const cr = resp.headers.get('content-range') || '';
-    let total = 0;
-    const m = cr.match(/\/(\d+)\s*$/);
-    if (m) total = Number(m[1]);
-    if (!total) {
-      // フォールバック: content-length が 1 のことが多いが念のため
-      total = Number(resp.headers.get('content-length')||0);
-    }
-    if (tds.size) tds.size.textContent = total ? fmtSize(total) : '—';
+    // サイズ
+    const cr=resp.headers.get('content-range')||''; let total=0; const m=cr.match(/\/(\d+)$/); if(m) total=Number(m[1]);
+    if(!total) total=Number(resp.headers.get('content-length')||0);
+    if(tds.size) tds.size.textContent= total? fmtSize(total):'—';
 
-    const lm = resp.headers.get('last-modified');
-    if (tds.date) tds.date.textContent = lm ? fmtDate(lm) : tds.date.textContent;
+    // 日付（Last-Modified 優先、なければ Date ヘッダ）
+    let lm=resp.headers.get('last-modified'); if(!lm) lm=resp.headers.get('date');
+    if(tds.date) tds.date.textContent=lm? fmtDate(lm):'—';
   }catch{
-    if (tds.size && (!tds.size.textContent || tds.size.textContent==='—')) tds.size.textContent = '—';
-    // date は既存値（サーバーから来ていればそれを）を優先
+    if(tds.size) tds.size.textContent='—';
+    if(tds.date) tds.date.textContent='—';
   }
 }
 
-/* ================= 再生 ================= */
-async function playBgmById(id, btn){
-  if(!id) return;
+/* ========== 再生 ========== */
+async function playBgmById(id,btn){
+  if(!id)return;
   try{
     setMsg('音源URL取得中…');
-    const url = await getPlayableUrlById(id);
-    const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-
-    player.pause();
-    player.src = url + bust;
-    await player.play(); // クリックのユーザー操作内
-
+    const url=await getPlayableUrlById(id);
+    const bust=(url.includes('?')?'&':'?')+'v='+Date.now();
+    player.pause(); player.src=url+bust; await player.play();
     setMsg('再生中');
-    if(btn){
-      const orig = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = '▶ 再生中…';
-      const reset=()=>{ try{ btn.disabled=false; btn.textContent=orig; }catch{} };
-      player.addEventListener('pause', reset, { once:true });
-      player.addEventListener('ended', reset, { once:true });
-    }
-  }catch(err){
-    const name = err?.name||'', msg = err?.message||String(err);
-    if (name==='NotAllowedError' || name==='AbortError'){
-      showErr('再生がブロックされました。端末の音量/消音スイッチを確認し、もう一度押してください。');
-    }else{
-      showErr('再生に失敗しました：'+msg);
-    }
-  }
+    if(btn){const orig=btn.textContent;btn.disabled=true;btn.textContent='▶ 再生中…';const reset=()=>{btn.disabled=false;btn.textContent=orig};player.addEventListener('pause',reset,{once:true});player.addEventListener('ended',reset,{once:true});}
+  }catch(err){const name=err?.name||'',msg=err?.message||String(err); if(name==='NotAllowedError'||name==='AbortError'){showErr('再生がブロックされました。端末の音量/消音を確認し再試行してください');}else{showErr('再生に失敗:'+msg);} }
 }
 
-/* ================= DURATION を計測 ================= */
-async function probeDuration(id, td){
+/* ========== duration 計測 ========== */
+async function probeDuration(id,td){
   try{
-    const url = await getPlayableUrlById(id);
-    const bust = (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-    const a = new Audio();
-    a.preload = 'metadata';
-    a.src = url + bust;
-    await new Promise((res,rej)=>{
-      const done=()=>{ a.removeEventListener('loadedmetadata', ok); a.removeEventListener('error', ng); };
-      const ok=()=>{ done(); res(); };
-      const ng=()=>{ done(); rej(new Error('audio meta error')); };
-      a.addEventListener('loadedmetadata', ok, { once:true });
-      a.addEventListener('error', ng, { once:true });
-    });
-    const dur = isFinite(a.duration) ? a.duration : 0;
-    if (td) td.textContent = dur ? fmtTime(dur) : '—';
-  }catch{
-    if (td) td.textContent = '—';
-  }
+    const url=await getPlayableUrlById(id);
+    const bust=(url.includes('?')?'&':'?')+'v='+Date.now();
+    const a=new Audio();a.preload='metadata';a.src=url+bust;
+    await new Promise((res,rej)=>{a.onloadedmetadata=()=>res();a.onerror=()=>rej();});
+    if(td) td.textContent=isFinite(a.duration)?fmtTime(a.duration):'—';
+  }catch{if(td) td.textContent='—';}
 }
 
-/* ================= 一覧の取得＆描画 ================= */
+/* ========== 一覧ロード ========== */
 async function loadList(){
-  showErr('');
-  setMsg('一覧を取得中…');
-  const tbody = $('#tbody');
-  tbody.innerHTML = `<tr><td colspan="6" class="center muted">読み込み中…</td></tr>`;
-
+  showErr(''); setMsg('一覧を取得中…');
+  const tbody=$('#tbody'); tbody.innerHTML='<tr><td colspan="6" class="center muted">読み込み中…</td></tr>';
   try{
-    const r = await fetch('/.netlify/functions/list', { credentials:'include' });
-    if(!r.ok) throw new Error('list '+r.status);
-
-    // JSONが壊れているケースに備えて一旦文字列で
-    const text = await r.text();
-    let data;
-    try{
-      data = JSON.parse(text);
-    }catch(e){
-      console.error('list: JSON parse error. body=', text);
-      throw new Error('list: JSON parse error');
-    }
-    if(!(data && data.ok && Array.isArray(data.items))) {
-      console.error('list: bad payload', data);
-      throw new Error('list: bad payload');
-    }
-
-    const items = data.items;
-    if (items.length === 0){
-      tbody.innerHTML = `<tr><td colspan="6" class="center muted">ファイルはありません</td></tr>`;
-      setMsg('OK');
-      return;
-    }
-
-    const frag = document.createDocumentFragment();
+    const r=await fetch('/.netlify/functions/list',{credentials:'include'});
+    if(!r.ok)throw new Error('list '+r.status);
+    const js=await r.json(); if(!(js&&js.ok&&Array.isArray(js.items))) throw new Error('bad payload');
+    const items=js.items;
+    if(items.length===0){tbody.innerHTML='<tr><td colspan="6" class="center muted">ファイルはありません</td></tr>'; setMsg('OK'); return;}
+    const frag=document.createDocumentFragment();
     items.forEach(it=>{
-      const id = it.id || it.key || '';
-      const nameFromId = decodeURIComponent((id.split('/').pop()||'').replace(/\+/g, ' '));
-      const title = it.title || nameFromId;
-
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
+      const id=it.id||it.key||''; const name=decodeURIComponent((id.split('/').pop()||'').replace(/\+/g,' ')); const title=it.title||name;
+      const tr=document.createElement('tr');
+      tr.innerHTML=`
         <td class="center"><input type="checkbox" class="rowchk" data-id="${id}"></td>
-        <td class="title num">${escapeHtml(title)}</td>
+        <td>${escapeHtml(title)}</td>
         <td class="num td-date">${fmtDate(it.date)}</td>
         <td class="right num td-size">${fmtSize(it.size)}</td>
         <td class="center num"><span class="dur">--:--</span></td>
-        <td class="center">
-          <button class="btn ghost btn-preview" data-id="${id}">試聴</button>
-        </td>
-      `;
+        <td class="center"><button class="btn ghost btn-preview" data-id="${id}">試聴</button></td>`;
       frag.appendChild(tr);
 
-      // 1) DURATION を非同期で反映
-      probeDuration(id, tr.querySelector('.dur')).catch(()=>{});
-
-      // 2) SIZE / DATE の穴埋め（0 or '—' のときだけ HEAD で補完）
-      const tdSize = tr.querySelector('.td-size');
-      const tdDate = tr.querySelector('.td-date');
-      const missingSize = (Number(it.size||0) <= 0);
-      const missingDate = !it.date;
-      if (missingSize || missingDate){
-        fillMetaByHead(id, { size: tdSize, date: tdDate }).catch(()=>{});
-      }
+      probeDuration(id,tr.querySelector('.dur'));
+      if(!it.size||!it.date){ fillMetaByHead(id,{size:tr.querySelector('.td-size'),date:tr.querySelector('.td-date')}); }
     });
-
-    tbody.innerHTML='';
-    tbody.appendChild(frag);
-    setMsg(`OK（${items.length}件）`);
-  }catch(err){
-    console.error('loadList error:', err);
-    tbody.innerHTML = `<tr><td colspan="6" class="center error">一覧の取得に失敗しました</td></tr>`;
-    showErr(String(err?.message || err));
-  }
+    tbody.innerHTML=''; tbody.appendChild(frag); setMsg(`OK(${items.length}件)`);
+  }catch(err){tbody.innerHTML='<tr><td colspan="6" class="center error">一覧取得に失敗</td></tr>'; showErr(err.message);}
 }
 
-/* ================= 追加（アップロード） ================= */
-$('#btnAdd').addEventListener('click', async ()=>{
-  showErr('');
-  const f = $('#fileInput').files?.[0];
-  if(!f){ alert('ファイルを選択してください'); return; }
-
-  try{
-    setMsg('アップロード中…');
-    const fd = new FormData();
-    fd.append('file', f);
-    const r = await fetch('/.netlify/functions/upload', { method:'POST', body:fd, credentials:'include' });
-    if(!r.ok) throw new Error('upload '+r.status);
-    const js = await r.json();
-    if(!(js && js.ok)) throw new Error('upload error');
-
-    setMsg('アップロード完了。一覧を更新します…');
-    $('#fileInput').value = '';
-    await loadList();
-  }catch(err){
-    showErr('アップロードに失敗しました：'+ (err?.message || err));
-  }
+/* ========== 追加/削除/イベント ========== */
+$('#btnAdd').addEventListener('click',async()=>{const f=$('#fileInput').files?.[0];if(!f){alert('ファイルを選択');return;}
+  try{setMsg('アップロード中…');const fd=new FormData();fd.append('file',f);const r=await fetch('/.netlify/functions/upload',{method:'POST',body:fd});const js=await r.json();if(!js.ok)throw new Error('upload error');$('#fileInput').value='';await loadList();}catch(e){showErr('アップロード失敗:'+e.message);}
 });
-
-/* ================= 削除 ================= */
-$('#btnDelete').addEventListener('click', async ()=>{
-  showErr('');
-  const ids = $$('#tbody .rowchk:checked').map(c => c.dataset.id).filter(Boolean);
-  if(ids.length===0){ alert('削除する行にチェックを付けてください'); return; }
-  if(!confirm(`${ids.length}件を削除しますか？`)) return;
-
-  try{
-    setMsg('削除中…');
-    const r = await fetch('/.netlify/functions/remove', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ ids }),
-      credentials:'include'
-    });
-    if(!r.ok) throw new Error('remove '+r.status);
-    const js = await r.json();
-    if(!(js && js.ok)) throw new Error('remove error');
-
-    setMsg('削除完了。一覧を更新します…');
-    await loadList();
-  }catch(err){
-    showErr('削除に失敗しました：'+ (err?.message || err));
-  }
+$('#btnDelete').addEventListener('click',async()=>{const ids=$$('#tbody .rowchk:checked').map(c=>c.dataset.id);if(!ids.length){alert('削除対象なし');return;} if(!confirm(`${ids.length}件削除?`))return;
+  try{setMsg('削除中…');const r=await fetch('/.netlify/functions/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});const js=await r.json();if(!js.ok)throw new Error('remove error');await loadList();}catch(e){showErr('削除失敗:'+e.message);}
 });
+document.addEventListener('click',ev=>{const btn=ev.target.closest('.btn-preview');if(btn)playBgmById(btn.dataset.id,btn);});
+$('#chkAll').addEventListener('change',e=>{$$('#tbody .rowchk').forEach(c=>c.checked=e.target.checked);});
 
-/* ================= 試聴ボタン（data-id使用） ================= */
-document.addEventListener('click', (ev)=>{
-  const btn = ev.target.closest('.btn-preview');
-  if(!btn) return;
-  const id = btn.dataset.id;
-  if(!id){ alert('音声IDが見つかりません'); return; }
-  playBgmById(id, btn);
-});
-
-/* ================= 全選択チェック ================= */
-$('#chkAll').addEventListener('change', (e)=>{
-  const on = e.target.checked;
-  $$('#tbody .rowchk').forEach(c => c.checked = on);
-});
-
-/* 初期化 */
+/* 初期ロード */
 loadList();
 </script>
 </body>
