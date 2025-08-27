@@ -1,53 +1,55 @@
 // functions/upload.js
 import { getStore } from '@netlify/blobs';
-import { preflight, json, readMultipartFile, STORE_NAME } from './_lib.js';
+import { preflight, json, STORE_NAME } from './_lib.js';
 
-export default async (request) => {
-  const pf = preflight(request); if (pf) return pf;
-  if (request.method !== 'POST') return json({ ok:false, error:'method' }, 405);
+export const config = { bodyParser: false };
+
+export default async (req) => {
+  const pf = preflight(req); if (pf) return pf;
+  if (req.method !== 'POST') return json({ ok: false, error: 'method' }, 405);
 
   try {
-    const file = await readMultipartFile(request, 'file');
-    if (!file) return json({ ok:false, error:'no-file' }, 400);
+    const formData = await req.formData();
+    const file = formData.get('file');
+    if (!file || !file.name) {
+      return json({ ok: false, error: 'no-file' }, 400);
+    }
 
-    const safeName = (file.name || 'audio.mp3').replace(/[^\w.\-]+/g, '_');
-    const now = new Date();
-    const rand = Math.random().toString(36).slice(2, 12);
-    // コロンを除去したISO（iOS/Safariの一部でパス扱いが壊れないように）
-    const ts = now.toISOString().replace(/\.\d+Z$/, 'Z').replace(/[:]/g, '');
-    const key = `audio/${ts}-${rand}.mp3`;
+    // オリジナル名をエンコードして保存
+    const origName = file.name;
+    let key = 'audio/' + encodeURIComponent(origName);
 
-    const ab = await file.arrayBuffer();
     const store = getStore({ name: STORE_NAME });
-    await store.set(key, ab, {
-      contentType: 'audio/mpeg',
-      metadata: { title: safeName, uploadedAt: now.toISOString() }
-    });
 
-    // 簡易診断：直後に get と list を試す
-    let gotOk = false, listed = false, count = 0, sample = [];
-    try { const g = await store.get(key); gotOk = !!g; } catch {}
-    try {
-      const res = await store.list();
-      const blobs = Array.isArray(res?.blobs) ? res.blobs
-                  : Array.isArray(res?.files) ? res.files
-                  : Array.isArray(res) ? res
-                  : [];
-      const keys = blobs.map(b => b.key || b.name || b.id || '').filter(Boolean);
-      listed = keys.includes(key);
-      count = keys.length;
-      sample = keys.slice(0, 5);
-    } catch {}
+    // 重複チェック
+    let finalKey = key;
+    let count = 1;
+    while (true) {
+      const exists = await store.get(finalKey).catch(() => null);
+      if (!exists) break;
+      // song.mp3 → song(2).mp3
+      const m = origName.match(/^(.*?)(\.[^.]+)?$/);
+      const base = m[1];
+      const ext = m[2] || '';
+      const newName = `${base}(${++count})${ext}`;
+      finalKey = 'audio/' + encodeURIComponent(newName);
+    }
+
+    // 保存
+    await store.set(finalKey, file.stream(), {
+      addRandomSuffix: false,
+      metadata: { title: origName },
+    });
 
     return json({
       ok: true,
-      id: key,
-      title: safeName,
-      size: ab.byteLength,
-      date: now.toISOString(),
-      diag: { storeName: STORE_NAME, gotOk, listed, count, sample }
+      id: finalKey,
+      title: origName,
+      size: file.size,
+      date: new Date().toISOString(),
     });
+
   } catch (err) {
-    return json({ ok:false, error:String(err?.message || err) }, 500);
+    return json({ ok: false, error: String(err?.message || err) }, 500);
   }
 };
