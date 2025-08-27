@@ -191,7 +191,7 @@ async function loadList(){
     const r = await fetch('/.netlify/functions/list', { credentials:'include' });
     if(!r.ok) throw new Error('list '+r.status);
     const data = await r.json();
-    if(!(data && data.ok && Array.isArray(data.items)))) throw new Error('bad payload');
+    if(!(data && data.ok && Array.isArray(data.items))) throw new Error('bad payload'); throw new Error('bad payload');
 
     const items = data.items;
     if (items.length === 0){
