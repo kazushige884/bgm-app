@@ -115,7 +115,7 @@ const fmtTime = (sec) => {
 };
 const escapeHtml = (s)=> String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
-/* ================= 再生（geturl→download フォールバック） ================= */
+/* ================= 再生URL（geturl→download フォールバック） ================= */
 const player = $('#bgmPlayer');
 
 async function getPlayableUrlById(id){
@@ -128,6 +128,35 @@ async function getPlayableUrlById(id){
   return `/.netlify/functions/download?id=${encodeURIComponent(id)}`;
 }
 
+/* ================= 軽量メタ取得（size/dateの穴埋め） ================= */
+async function fillMetaByHead(id, tds){
+  try{
+    const url = await getPlayableUrlById(id);
+    // Range 0-0 で最小取得 → Content-Range/Last-Modified から全長/日時を推定
+    const resp = await fetch(url, { headers:{ Range:'bytes=0-0' }, credentials:'include' });
+    // 404 などは握りつぶして '—' 表示
+    if (!resp.ok) throw new Error('head '+resp.status);
+
+    // サイズは Content-Range: "bytes 0-0/12345" を優先
+    const cr = resp.headers.get('content-range') || '';
+    let total = 0;
+    const m = cr.match(/\/(\d+)\s*$/);
+    if (m) total = Number(m[1]);
+    if (!total) {
+      // フォールバック: content-length が 1 のことが多いが念のため
+      total = Number(resp.headers.get('content-length')||0);
+    }
+    if (tds.size) tds.size.textContent = total ? fmtSize(total) : '—';
+
+    const lm = resp.headers.get('last-modified');
+    if (tds.date) tds.date.textContent = lm ? fmtDate(lm) : tds.date.textContent;
+  }catch{
+    if (tds.size && (!tds.size.textContent || tds.size.textContent==='—')) tds.size.textContent = '—';
+    // date は既存値（サーバーから来ていればそれを）を優先
+  }
+}
+
+/* ================= 再生 ================= */
 async function playBgmById(id, btn){
   if(!id) return;
   try{
@@ -191,7 +220,7 @@ async function loadList(){
     const r = await fetch('/.netlify/functions/list', { credentials:'include' });
     if(!r.ok) throw new Error('list '+r.status);
 
-    // テキスト→JSON（壊れたJSONのデバッグ用）
+    // JSONが壊れているケースに備えて一旦文字列で
     const text = await r.text();
     let data;
     try{
@@ -200,7 +229,6 @@ async function loadList(){
       console.error('list: JSON parse error. body=', text);
       throw new Error('list: JSON parse error');
     }
-
     if(!(data && data.ok && Array.isArray(data.items))) {
       console.error('list: bad payload', data);
       throw new Error('list: bad payload');
@@ -215,22 +243,34 @@ async function loadList(){
 
     const frag = document.createDocumentFragment();
     items.forEach(it=>{
+      const id = it.id || it.key || '';
+      const nameFromId = decodeURIComponent((id.split('/').pop()||'').replace(/\+/g, ' '));
+      const title = it.title || nameFromId;
+
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td class="center"><input type="checkbox" class="rowchk" data-id="${it.id}"></td>
-        <td class="title num">${escapeHtml(it.title || '')}</td>
-        <td class="num">${fmtDate(it.date)}</td>
-        <td class="right num">${fmtSize(it.size)}</td>
+        <td class="center"><input type="checkbox" class="rowchk" data-id="${id}"></td>
+        <td class="title num">${escapeHtml(title)}</td>
+        <td class="num td-date">${fmtDate(it.date)}</td>
+        <td class="right num td-size">${fmtSize(it.size)}</td>
         <td class="center num"><span class="dur">--:--</span></td>
         <td class="center">
-          <button class="btn ghost btn-preview" data-id="${it.id}">試聴</button>
+          <button class="btn ghost btn-preview" data-id="${id}">試聴</button>
         </td>
       `;
       frag.appendChild(tr);
 
-      // DURATION を非同期で反映（失敗しても落とさない）
-      const durCell = tr.querySelector('.dur');
-      probeDuration(it.id, durCell).catch(()=>{});
+      // 1) DURATION を非同期で反映
+      probeDuration(id, tr.querySelector('.dur')).catch(()=>{});
+
+      // 2) SIZE / DATE の穴埋め（0 or '—' のときだけ HEAD で補完）
+      const tdSize = tr.querySelector('.td-size');
+      const tdDate = tr.querySelector('.td-date');
+      const missingSize = (Number(it.size||0) <= 0);
+      const missingDate = !it.date;
+      if (missingSize || missingDate){
+        fillMetaByHead(id, { size: tdSize, date: tdDate }).catch(()=>{});
+      }
     });
 
     tbody.innerHTML='';
