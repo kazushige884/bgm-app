@@ -113,12 +113,12 @@ const fmtTime = (sec) => {
   const m = Math.floor(s/60), r = s%60;
   return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
 };
+const escapeHtml = (s)=> String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
 /* ================= 再生（geturl→download フォールバック） ================= */
 const player = $('#bgmPlayer');
 
 async function getPlayableUrlById(id){
-  // 署名付きURL（または download フォールバックURL文字列）を取得
   try{
     const r = await fetch(`/.netlify/functions/geturl?id=${encodeURIComponent(id)}`, { credentials:'include' });
     if(!r.ok) throw new Error('geturl '+r.status);
@@ -190,8 +190,21 @@ async function loadList(){
   try{
     const r = await fetch('/.netlify/functions/list', { credentials:'include' });
     if(!r.ok) throw new Error('list '+r.status);
-    const data = await r.json();
-    if(!(data && data.ok && Array.isArray(data.items))) throw new Error('bad payload'); throw new Error('bad payload');
+
+    // テキスト→JSON（壊れたJSONのデバッグ用）
+    const text = await r.text();
+    let data;
+    try{
+      data = JSON.parse(text);
+    }catch(e){
+      console.error('list: JSON parse error. body=', text);
+      throw new Error('list: JSON parse error');
+    }
+
+    if(!(data && data.ok && Array.isArray(data.items))) {
+      console.error('list: bad payload', data);
+      throw new Error('list: bad payload');
+    }
 
     const items = data.items;
     if (items.length === 0){
@@ -215,22 +228,19 @@ async function loadList(){
       `;
       frag.appendChild(tr);
 
-      // DURATION を非同期で反映
+      // DURATION を非同期で反映（失敗しても落とさない）
       const durCell = tr.querySelector('.dur');
-      probeDuration(it.id, durCell);
+      probeDuration(it.id, durCell).catch(()=>{});
     });
 
     tbody.innerHTML='';
     tbody.appendChild(frag);
     setMsg(`OK（${items.length}件）`);
   }catch(err){
+    console.error('loadList error:', err);
     tbody.innerHTML = `<tr><td colspan="6" class="center error">一覧の取得に失敗しました</td></tr>`;
     showErr(String(err?.message || err));
   }
-}
-
-function escapeHtml(s){
-  return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
 /* ================= 追加（アップロード） ================= */
